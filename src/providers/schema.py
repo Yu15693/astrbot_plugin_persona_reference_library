@@ -46,3 +46,4 @@ class AdapterImage:
 class ImageGenerateOutput:
     images: list[AdapterImage]
     warnings: list[str] = field(default_factory=list)
+    elapsed_ms: int | None = None

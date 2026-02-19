@@ -63,20 +63,23 @@ async def test_openrouter_image_generate_success(monkeypatch: pytest.MonkeyPatch
 
     async def fake_request(_: dict[str, Any]) -> dict[str, Any]:
         return {
-            "choices": [
-                {
-                    "message": {
-                        "images": [
-                            {"image_url": {"url": "https://example.com/image-1.png"}},
-                            {
-                                "image_url": {
-                                    "url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="
+            "data": {
+                "choices": [
+                    {
+                        "message": {
+                            "images": [
+                                {"image_url": {"url": "https://example.com/image-1.png"}},
+                                {
+                                    "image_url": {
+                                        "url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="
+                                    }
                                 }
-                            },
-                        ]
+                            ]
+                        }
                     }
-                }
-            ]
+                ]
+            },
+            "elapsed_ms": 321,
         }
 
     monkeypatch.setattr(adapter, "_request_chat_completions", fake_request)
@@ -94,6 +97,7 @@ async def test_openrouter_image_generate_success(monkeypatch: pytest.MonkeyPatch
     assert result.images[0].kind == "http_url"
     assert result.images[1].kind == "data_url"
     assert result.warnings == []
+    assert result.elapsed_ms == 321
 
 
 @pytest.mark.asyncio
@@ -107,15 +111,18 @@ async def test_openrouter_image_generate_reference_validation_warnings(
     async def fake_request(payload: dict[str, Any]) -> dict[str, Any]:
         captured_payload["payload"] = payload
         return {
-            "choices": [
-                {
-                    "message": {
-                        "images": [
-                            {"image_url": {"url": "https://example.com/image-1.png"}}
-                        ]
+            "data": {
+                "choices": [
+                    {
+                        "message": {
+                            "images": [
+                                {"image_url": {"url": "https://example.com/image-1.png"}}
+                            ]
+                        }
                     }
-                }
-            ]
+                ]
+            },
+            "elapsed_ms": 56,
         }
 
     monkeypatch.setattr(adapter, "_request_chat_completions", fake_request)
@@ -142,6 +149,7 @@ async def test_openrouter_image_generate_reference_validation_warnings(
     assert len(image_inputs) == 2
     assert any("is empty and ignored" in warning for warning in result.warnings)
     assert any("not a valid http(s) URL or data URL" in warning for warning in result.warnings)
+    assert result.elapsed_ms == 56
 
 
 @pytest.mark.asyncio
@@ -153,16 +161,19 @@ async def test_openrouter_image_generate_count_mismatch_warning(
 
     async def fake_request(_: dict[str, Any]) -> dict[str, Any]:
         return {
-            "choices": [
-                {
-                    "message": {
-                        "images": [
-                            {"image_url": {"url": "https://example.com/image-1.png"}},
-                            {"image_url": {"url": "https://example.com/image-2.png"}},
-                        ]
+            "data": {
+                "choices": [
+                    {
+                        "message": {
+                            "images": [
+                                {"image_url": {"url": "https://example.com/image-1.png"}},
+                                {"image_url": {"url": "https://example.com/image-2.png"}},
+                            ]
+                        }
                     }
-                }
-            ]
+                ]
+            },
+            "elapsed_ms": 78,
         }
 
     monkeypatch.setattr(adapter, "_request_chat_completions", fake_request)
@@ -178,6 +189,7 @@ async def test_openrouter_image_generate_count_mismatch_warning(
 
     assert len(result.images) == 2
     assert any("different from requested" in warning for warning in result.warnings)
+    assert result.elapsed_ms == 78
 
 
 @pytest.mark.asyncio
@@ -188,7 +200,10 @@ async def test_openrouter_image_generate_no_images_raises_upstream_error(
     adapter = _make_adapter()
 
     async def fake_request(_: dict[str, Any]) -> dict[str, Any]:
-        return {"choices": [{"message": {"content": [{"type": "text", "text": "ok"}]}}]}
+        return {
+            "data": {"choices": [{"message": {"content": [{"type": "text", "text": "ok"}]}}]},
+            "elapsed_ms": 15,
+        }
 
     monkeypatch.setattr(adapter, "_request_chat_completions", fake_request)
 

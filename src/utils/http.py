@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+import time
+from typing import Any, TypedDict
 
 import aiohttp
 
@@ -12,6 +13,11 @@ from .log import StructuredLogEmitter
 
 logger = logging.getLogger(__name__)
 structured_log = StructuredLogEmitter(logger=logger)
+
+
+class PostJsonSuccessResponse(TypedDict):
+    data: dict[str, Any]
+    elapsed_ms: int
 
 
 def _mask_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -32,13 +38,14 @@ async def post_json(
     headers: dict[str, str],
     timeout_sec: int = 30,
     source: str = "Upstream",
-) -> dict[str, Any]:
-    """发送 JSON POST 请求并返回 JSON 对象。
+) -> PostJsonSuccessResponse:
+    """发送 JSON POST 请求并返回结果对象。
 
     约定：
     - 传输层错误映射为 `NETWORK_ERROR/TIMEOUT`
     - 非 2xx HTTP 响应映射为 `UPSTREAM_ERROR`
     - 成功响应必须是 JSON object（dict）
+    - 成功返回结构：`{"data": <json_object>, "elapsed_ms": <int>}`
     """
     if timeout_sec <= 0:
         raise PluginException(
@@ -53,6 +60,7 @@ async def post_json(
         )
 
     masked_headers = _mask_headers(headers)
+    started_at = time.perf_counter()
     request_error_detail = {
         "source": source,
         "url": url,
@@ -69,9 +77,11 @@ async def post_json(
             async with session.post(url, json=payload, headers=headers) as response:
                 raw_text = await response.text()
                 masked_response_headers = _mask_headers(dict(response.headers))
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
                 structured_log.debug(
                     "http.response",
                     {
+                        "elapsed_ms": elapsed_ms,
                         "status_code": response.status,
                         "headers": masked_response_headers,
                         "body": raw_text,
@@ -85,6 +95,7 @@ async def post_json(
                         retryable=(response.status >= 500 or response.status == 429),
                         detail={
                             **request_error_detail,
+                            "elapsed_ms": elapsed_ms,
                             "status_code": response.status,
                             "headers": masked_response_headers,
                             "body": raw_text,
@@ -92,19 +103,22 @@ async def post_json(
                     )
 
     except asyncio.TimeoutError as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         raise PluginException(
             code=PluginErrorCode.TIMEOUT,
             message=f"{source} request timed out.",
             retryable=True,
-            detail=request_error_detail,
+            detail={**request_error_detail, "elapsed_ms": elapsed_ms},
         ) from exc
     except aiohttp.ClientError as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         raise PluginException(
             code=PluginErrorCode.NETWORK_ERROR,
             message=f"{source} request failed.",
             retryable=True,
             detail={
                 **request_error_detail,
+                "elapsed_ms": elapsed_ms,
                 "client_error": str(exc),
                 "client_error_type": type(exc).__name__,
             },
@@ -119,7 +133,11 @@ async def post_json(
             code=PluginErrorCode.UPSTREAM_ERROR,
             message=f"{source} returned invalid JSON.",
             retryable=True,
-            detail={**request_error_detail, "body": raw_text},
+            detail={
+                **request_error_detail,
+                "elapsed_ms": int((time.perf_counter() - started_at) * 1000),
+                "body": raw_text,
+            },
         ) from exc
 
     if not isinstance(data, dict):
@@ -127,12 +145,22 @@ async def post_json(
             code=PluginErrorCode.UPSTREAM_ERROR,
             message=f"{source} response must be a JSON object.",
             retryable=True,
-            detail={**request_error_detail, "response_type": type(data).__name__},
+            detail={
+                **request_error_detail,
+                "elapsed_ms": int((time.perf_counter() - started_at) * 1000),
+                "response_type": type(data).__name__,
+            },
         )
+
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    result = {
+        "data": data,
+        "elapsed_ms": elapsed_ms,
+    }
 
     structured_log.debug(
         "http.response",
-        {"data": data},
+        result,
     )
 
-    return data
+    return result

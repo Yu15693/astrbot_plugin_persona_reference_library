@@ -7,7 +7,7 @@ from typing import Any
 
 from ..utils.dicts import get_dict_value
 from ..utils.errors import PluginErrorCode, PluginException
-from ..utils.http import post_json
+from ..utils.http import PostJsonSuccessResponse, post_json
 from ..utils.url import is_data_url, is_http_url
 from .base import ProviderAdapter
 from .schema import AdapterImage, ImageGenerateInput, ImageGenerateOutput
@@ -29,8 +29,8 @@ class OpenRouterAdapter(ProviderAdapter):
 
     async def _request_chat_completions(
         self, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        """统一请求 OpenRouter chat/completions 并返回 JSON 对象。"""
+    ) -> PostJsonSuccessResponse:
+        """统一请求 OpenRouter chat/completions 并返回响应封装对象。"""
         if not self.api_key.strip():
             raise PluginException(
                 code=PluginErrorCode.PERMISSION_DENIED,
@@ -42,7 +42,7 @@ class OpenRouterAdapter(ProviderAdapter):
                 },
             )
         url = f"{self.base_url.rstrip('/')}/chat/completions"
-        return await post_json(
+        response = await post_json(
             url=url,
             payload=payload,
             headers={
@@ -52,6 +52,7 @@ class OpenRouterAdapter(ProviderAdapter):
             timeout_sec=self.timeout_sec,
             source="OpenRouter",
         )
+        return response
 
     def _build_image_generate_payload(
         self, payload: ImageGenerateInput
@@ -103,7 +104,10 @@ class OpenRouterAdapter(ProviderAdapter):
         """执行图像生成请求并返回统一 ImageGenerateOutput。"""
         request_payload, warnings = self._build_image_generate_payload(payload)
 
-        data = await self._request_chat_completions(request_payload)
+        response = await self._request_chat_completions(request_payload)
+        data = response["data"]
+        elapsed_ms = response["elapsed_ms"]
+
         images = _extract_openrouter_images(data)
         if not images:
             raise PluginException(
@@ -113,6 +117,7 @@ class OpenRouterAdapter(ProviderAdapter):
                 detail={
                     "provider": self.provider,
                     "response_keys": sorted(data.keys()),
+                    "elapsed_ms": elapsed_ms,
                 },
             )
 
@@ -121,7 +126,9 @@ class OpenRouterAdapter(ProviderAdapter):
                 f"Upstream returned {len(images)} images, different from requested {payload.count}."
             )
 
-        return ImageGenerateOutput(images=images, warnings=warnings)
+        return ImageGenerateOutput(
+            images=images, warnings=warnings, elapsed_ms=elapsed_ms
+        )
 
 
 def _extract_openrouter_images(

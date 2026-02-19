@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from io import BytesIO
 from pathlib import Path
 
 import aiohttp
@@ -74,3 +75,32 @@ def save_file(path: Path, content: bytes | str, encoding: str = "utf-8") -> Path
     else:
         path.write_text(content, encoding=encoding)
     return path
+
+
+def compress_image_bytes_to_jpg(
+    image_bytes: bytes,
+    quality: int = 85,
+) -> bytes:
+    """将图像二进制压缩并转换为 JPG（二进制）。"""
+    # 采用实用的 JPEG 质量范围，避免出现极端体积。
+    if quality < 1 or quality > 95:
+        raise ValueError("quality must be in [1, 95].")
+
+    from PIL import Image
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        # JPEG 不支持透明通道，这里将透明像素合成到白色背景。
+        if image.mode in {"RGBA", "LA"} or (
+            image.mode == "P" and "transparency" in image.info
+        ):
+            alpha = image.convert("RGBA")
+            background = Image.new("RGB", alpha.size, (255, 255, 255))
+            background.paste(alpha, mask=alpha.split()[-1])
+            rgb_image = background
+        else:
+            rgb_image = image.convert("RGB")
+
+        output = BytesIO()
+        # 启用 optimize，在保持可接受画质的同时尽量减小体积。
+        rgb_image.save(output, format="JPEG", quality=quality, optimize=True)
+        return output.getvalue()

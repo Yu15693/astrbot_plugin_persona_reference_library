@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from src.providers.config import read_provider_adapter_config
@@ -10,6 +12,7 @@ from src.providers.openrouter import OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput, ImageGenerateOutput
 from src.utils.id import generate_id
 from src.utils.io import (
+    compress_image_bytes_to_jpg,
     decode_data_url,
     download_http_resource,
     save_file,
@@ -30,6 +33,7 @@ OPENROUTER_VALID_ASPECT_RATIOS = {
     "3:2",
 }
 OPENROUTER_VALID_IMAGE_SIZES = {"1K", "2K", "4K"}
+OPENROUTER_SAVE_IMAGE_FORMATS = {"png", "jpg"}
 
 
 def _build_live_adapter() -> OpenRouterAdapter:
@@ -57,12 +61,38 @@ def _assert_openrouter_image_config(aspect_ratio: str, image_size: str) -> None:
     ), f"Unsupported image_size for OpenRouter test: {image_size}"
 
 
-async def _save_output_images(case_name: str, output: ImageGenerateOutput) -> Path:
+def _resolve_save_image_format() -> Literal["png", "jpg"]:
+    value = os.getenv("OPENROUTER_TEST_SAVE_IMAGE_FORMAT", "png").strip().lower()
+    assert (
+        value in OPENROUTER_SAVE_IMAGE_FORMATS
+    ), f"Unsupported OPENROUTER_TEST_SAVE_IMAGE_FORMAT: {value}"
+    if value == "jpg":
+        return "jpg"
+    return "png"
+
+
+def _convert_for_save(
+    content: bytes,
+    suffix: str,
+    save_image_format: Literal["png", "jpg"],
+) -> tuple[bytes, str]:
+    if save_image_format == "jpg":
+        return compress_image_bytes_to_jpg(content), ".jpg"
+    return content, suffix
+
+
+async def _save_output_images(
+    case_name: str,
+    output: ImageGenerateOutput,
+    save_image_format: Literal["png", "jpg"],
+) -> Path:
     target_dir = PLUGIN_ROOT / "tmp"
     target_dir.mkdir(parents=True, exist_ok=True)
     items: list[dict[str, object]] = []
     metadata: dict[str, object] = {
         "case_name": case_name,
+        "save_image_format": save_image_format,
+        "elapsed_ms": output.elapsed_ms,
         "items": items,
         "warnings": output.warnings,
     }
@@ -74,6 +104,7 @@ async def _save_output_images(case_name: str, output: ImageGenerateOutput) -> Pa
         }
         if image.kind == "data_url":
             content, suffix = decode_data_url(image.value)
+            content, suffix = _convert_for_save(content, suffix, save_image_format)
             output_path = target_dir / f"{generate_id()}{suffix}"
             save_file(output_path, content)
             item["filename"] = output_path.name
@@ -86,6 +117,7 @@ async def _save_output_images(case_name: str, output: ImageGenerateOutput) -> Pa
             item["source_url"] = image.value
             try:
                 content, suffix = await download_http_resource(image.value, timeout_sec=30)
+                content, suffix = _convert_for_save(content, suffix, save_image_format)
                 output_path = target_dir / f"{generate_id()}{suffix}"
                 save_file(output_path, content)
                 item["filename"] = output_path.name
@@ -128,13 +160,14 @@ async def test_openrouter_image_generate_live_smoke() -> None:
         image_size=image_size,
         count=1,
     )
+    save_image_format = _resolve_save_image_format()
 
     result = await adapter.image_generate(payload)
     if result.warnings:
         print(f"[live] result warnings: {json.dumps(result.warnings, ensure_ascii=False)}")
     assert result.images
     assert result.images[0].kind in {"http_url", "data_url"}
-    await _save_output_images("smoke", result)
+    await _save_output_images("smoke", result, save_image_format)
 
 
 @pytest.mark.integration
@@ -155,12 +188,13 @@ async def test_openrouter_image_generate_live_resolution_and_clarity() -> None:
         image_size=image_size,
         count=1,
     )
+    save_image_format = _resolve_save_image_format()
 
     result = await adapter.image_generate(payload)
     if result.warnings:
         print(f"[live] result warnings: {json.dumps(result.warnings, ensure_ascii=False)}")
     assert result.images
-    await _save_output_images("resolution_and_clarity", result)
+    await _save_output_images("resolution_and_clarity", result, save_image_format)
 
 
 @pytest.mark.integration
@@ -181,6 +215,7 @@ async def test_openrouter_image_generate_live_prompt_two_images_and_n2() -> None
         image_size=image_size,
         count=2,
     )
+    save_image_format = _resolve_save_image_format()
     request_payload, _ = adapter._build_image_generate_payload(payload)
     assert request_payload.get("n") == 2
 
@@ -190,4 +225,4 @@ async def test_openrouter_image_generate_live_prompt_two_images_and_n2() -> None
     assert result.images
     if len(result.images) != 2:
         assert any("different from requested 2" in warning for warning in result.warnings)
-    await _save_output_images("two_images_n2", result)
+    await _save_output_images("two_images_n2", result, save_image_format)
