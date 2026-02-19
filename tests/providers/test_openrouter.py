@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from src.providers.openrouter import OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput
 from src.utils.errors import PluginErrorCode, PluginException
@@ -17,6 +16,44 @@ def _make_adapter() -> OpenRouterAdapter:
         image_model="test-image-model",
         tool_model="test-tool-model",
     )
+
+
+def test_openrouter_image_generate_modalities_default() -> None:
+    """验证：默认模型使用 image+text 双模态。"""
+    adapter = _make_adapter()
+
+    payload, _ = adapter._build_image_generate_payload(
+        ImageGenerateInput(
+            prompt="A cat on the moon",
+            aspect_ratio="1:1",
+            image_size="1K",
+            count=1,
+        )
+    )
+
+    assert payload["modalities"] == ["image", "text"]
+
+
+def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
+    """验证：seedream 系列模型只使用 image 单模态。"""
+    adapter = OpenRouterAdapter(
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        timeout_sec=30,
+        image_model="bytedance-seed/seedream-4.5",
+        tool_model="test-tool-model",
+    )
+
+    payload, _ = adapter._build_image_generate_payload(
+        ImageGenerateInput(
+            prompt="A cat on the moon",
+            aspect_ratio="1:1",
+            image_size="1K",
+            count=1,
+        )
+    )
+
+    assert payload["modalities"] == ["image"]
 
 
 @pytest.mark.asyncio

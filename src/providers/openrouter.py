@@ -15,6 +15,8 @@ from .utils import (
     append_adapter_image,
 )
 
+IMAGE_ONLY_MODALITY_MODEL_KEYWORDS = ("seedream-4.5",)
+
 
 @dataclass(slots=True)
 class OpenRouterAdapter(ProviderAdapter):
@@ -83,13 +85,19 @@ class OpenRouterAdapter(ProviderAdapter):
                 }
             ],
             "n": payload.count,
-            "modalities": ["image", "text"],
+            "modalities": self._build_image_modalities(),
             "image_config": {
                 "aspect_ratio": payload.aspect_ratio,
                 "image_size": payload.image_size,
             },
         }
         return request_payload, warnings
+
+    def _build_image_modalities(self) -> list[str]:
+        model_name = self.image_model.strip().lower()
+        if any(keyword in model_name for keyword in IMAGE_ONLY_MODALITY_MODEL_KEYWORDS):
+            return ["image"]
+        return ["image", "text"]
 
     async def image_generate(self, payload: ImageGenerateInput) -> ImageGenerateOutput:
         """执行图像生成请求并返回统一 ImageGenerateOutput。"""
