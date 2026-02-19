@@ -82,6 +82,7 @@ class OpenRouterAdapter(ProviderAdapter):
                     "content": content,
                 }
             ],
+            "n": payload.count,
             "modalities": ["image", "text"],
             "image_config": {
                 "aspect_ratio": payload.aspect_ratio,

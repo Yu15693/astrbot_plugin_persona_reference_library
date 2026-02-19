@@ -2,38 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import aiohttp
 
 from .errors import PluginErrorCode, PluginException
+from .log import StructuredLogEmitter
+
+logger = logging.getLogger(__name__)
+structured_log = StructuredLogEmitter(logger=logger)
 
 
 def _mask_headers(headers: dict[str, str]) -> dict[str, str]:
+    secret_keys = {"authorization", "cookie", "set-cookie", "x-api-key"}
     masked: dict[str, str] = {}
     for key, value in headers.items():
-        if key.lower() in {"authorization", "cookie"}:
+        if key.lower() in secret_keys:
             masked[key] = "<redacted>"
             continue
         masked[key] = value
     return masked
-
-
-def _summarize_payload(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _summarize_payload(item) for key, item in value.items()}
-    if isinstance(value, list):
-        limit = 5
-        items = [_summarize_payload(item) for item in value[:limit]]
-        if len(value) > limit:
-            items.append(f"<+{len(value) - limit} items>")
-        return items
-    if isinstance(value, str):
-        if value.startswith("data:"):
-            return f"<data-url len={len(value)}>"
-        if len(value) > 200:
-            return f"{value[:200]}...(truncated)"
-    return value
 
 
 async def post_json(
@@ -63,13 +52,15 @@ async def post_json(
             },
         )
 
-    request_detail = {
+    masked_headers = _mask_headers(headers)
+    request_error_detail = {
         "source": source,
         "url": url,
         "timeout_sec": timeout_sec,
-        "headers": _mask_headers(headers),
-        "payload": _summarize_payload(payload),
+        "headers": masked_headers,
+        "payload": payload,
     }
+    structured_log.debug("http.request", request_error_detail)
 
     # 使用 total timeout，覆盖连接、读写和响应等待总耗时。
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
@@ -77,24 +68,35 @@ async def post_json(
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=payload, headers=headers) as response:
                 raw_text = await response.text()
+                masked_response_headers = _mask_headers(dict(response.headers))
+                structured_log.debug(
+                    "http.response",
+                    {
+                        "status_code": response.status,
+                        "headers": masked_response_headers,
+                        "body": raw_text,
+                    },
+                )
                 # HTTP 错误由状态码判断，保留响应片段用于问题定位。
                 if response.status >= 400:
                     raise PluginException(
                         code=PluginErrorCode.UPSTREAM_ERROR,
-                        message=f"{source} HTTP {response.status}: {raw_text[:400]}",
+                        message=f"{source} HTTP {response.status}",
                         retryable=(response.status >= 500 or response.status == 429),
                         detail={
-                            **request_detail,
+                            **request_error_detail,
                             "status_code": response.status,
-                            "response_excerpt": raw_text[:400],
+                            "headers": masked_response_headers,
+                            "body": raw_text,
                         },
                     )
+
     except asyncio.TimeoutError as exc:
         raise PluginException(
             code=PluginErrorCode.TIMEOUT,
             message=f"{source} request timed out.",
             retryable=True,
-            detail=request_detail,
+            detail=request_error_detail,
         ) from exc
     except aiohttp.ClientError as exc:
         raise PluginException(
@@ -102,7 +104,7 @@ async def post_json(
             message=f"{source} request failed.",
             retryable=True,
             detail={
-                **request_detail,
+                **request_error_detail,
                 "client_error": str(exc),
                 "client_error_type": type(exc).__name__,
             },
@@ -111,12 +113,13 @@ async def post_json(
     # 网络链路成功后再解析 JSON，便于区分“传输错误”与“响应格式错误”。
     try:
         data = json.loads(raw_text)
+
     except json.JSONDecodeError as exc:
         raise PluginException(
             code=PluginErrorCode.UPSTREAM_ERROR,
             message=f"{source} returned invalid JSON.",
             retryable=True,
-            detail={**request_detail, "response_excerpt": raw_text[:400]},
+            detail={**request_error_detail, "body": raw_text},
         ) from exc
 
     if not isinstance(data, dict):
@@ -124,6 +127,12 @@ async def post_json(
             code=PluginErrorCode.UPSTREAM_ERROR,
             message=f"{source} response must be a JSON object.",
             retryable=True,
-            detail={**request_detail, "response_type": type(data).__name__},
+            detail={**request_error_detail, "response_type": type(data).__name__},
         )
+
+    structured_log.debug(
+        "http.response",
+        {"data": data},
+    )
+
     return data

@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import Any
 
+from .log import summarize_log_value
+
 
 class PluginErrorCode(str, Enum):
     PERMISSION_DENIED = "PERMISSION_DENIED"
@@ -39,5 +41,7 @@ class PluginException(Exception):
         base = f"[{self.code.value}] {self.message} (retryable={self.retryable})"
         if not self.detail:
             return base
-        detail_json = json.dumps(self.detail, ensure_ascii=False, default=str)
+        detail_json = json.dumps(
+            summarize_log_value(self.detail), ensure_ascii=False, default=str
+        )
         return f"{base} detail={detail_json}"
