@@ -87,7 +87,6 @@ async def _save_output_images(
     output: ImageGenerateOutput,
     save_image_format: Literal["png", "jpg"],
 ) -> Path:
-    assert output.metadata is not None
     base_dir = PLUGIN_ROOT / "tmp"
     base_dir.mkdir(parents=True, exist_ok=True)
     run_id = generate_id()

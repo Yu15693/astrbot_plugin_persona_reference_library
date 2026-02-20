@@ -48,13 +48,13 @@ class InferenceMetadata:
     """供应商标识。"""
     model: str
     """实际请求使用的模型名。"""
-    elapsed_ms: int | None = None
+    elapsed_ms: int
     """从发起请求到收到响应的耗时（毫秒）。"""
 
 
 @dataclass(slots=True)
 class ImageGenerateOutput:
     images: list[AdapterImage]
-    metadata: InferenceMetadata | None = None
+    metadata: InferenceMetadata
     """推理元数据"""
     warnings: list[str] = field(default_factory=list)

@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 
-from ..utils.log import StructuredLogEmitter
+from ..utils.log import logger
 from .keys import (
     CONFIG_IMAGE_MODELS_KEY,
     CURRENT_IMAGE_MODEL_KEY,
     PLUGIN_STATE_KEY,
 )
 from .schema import PluginState
-
-structured_log = StructuredLogEmitter(logger=logging.getLogger(__name__))
 
 # KV 访问函数签名（通过函数注入而非硬编码依赖）：
 # - kv_get(key, default) -> 已存值或 default
@@ -88,7 +85,7 @@ class PluginStateStore:
             self._config[CONFIG_IMAGE_MODELS_KEY] = list(image_models)
 
             if not image_models:
-                structured_log.warning(
+                logger.warning(
                     "storage.image_models_empty",
                     {
                         "config_keys": sorted(self._config.keys()),

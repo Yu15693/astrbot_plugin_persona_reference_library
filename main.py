@@ -1,4 +1,4 @@
-from astrbot.api import AstrBotConfig, logger
+from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
@@ -21,6 +21,7 @@ from .src.storage.keys import (
 from .src.tools.draw_args import parse_draw_args
 from .src.tools.image import build_image_send_result, extract_images_from_event
 from .src.utils.args import extract_command_args
+from .src.utils.log import logger
 
 
 class MyPlugin(Star):
@@ -121,7 +122,11 @@ class MyPlugin(Star):
 
     @prl.command("draw")
     async def prl_draw(self, event: AstrMessageEvent):
-        """生图指令，可选 `ratio=` 和 `size=` 参数，消息附图会作为参考图。"""
+        """
+        根据提示词生成图片，可选 `ratio=` 与 `size=` 参数，ratio 为图片比例，size 为图片分辨率。
+        消息附带的图片会作为参考图，指令输入格式如
+        /prl draw ratio=16:9 size=1K 一个可爱的动漫女孩 【同时上传多张参考图】
+        """
         draw_args = extract_command_args(event.message_str, ("prl", "draw"))
         ratio, size, prompt = parse_draw_args(draw_args)
         if not prompt:
@@ -131,6 +136,16 @@ class MyPlugin(Star):
             return
 
         reference_images = await extract_images_from_event(event)
+        yield event.plain_result(
+            "\n".join(
+                [
+                    "生图任务开始",
+                    f"ratio={ratio or '(默认)'}  size={size or '(默认)'}  参考图={len(reference_images)} 张",
+                    f"prompt={prompt}",
+                ]
+            )
+        )
+
         payload = ImageGenerateInput(
             prompt=prompt,
             aspect_ratio=ratio,
@@ -145,6 +160,18 @@ class MyPlugin(Star):
             yield event.plain_result(f"生图失败：{exc}")
             return
 
+        model_name = output.metadata.model
+        elapsed_text = f"{output.metadata.elapsed_ms} ms"
+
+        yield event.plain_result(
+            "\n".join(
+                [
+                    "生图完成",
+                    f"模型={model_name}  耗时={elapsed_text}",
+                ]
+            )
+        )
+
         for image in output.images:
             result = build_image_send_result(event, image)
             if result is None:
@@ -153,20 +180,6 @@ class MyPlugin(Star):
 
         if output.warnings:
             yield event.plain_result("生图警告：\n" + "\n".join(output.warnings))
-
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令"""  # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str  # 用户发的纯文本消息字符串
-        message_chain = (
-            event.get_messages()
-        )  # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(
-            f"Hello, {user_name}, 你发了 {message_str}!"
-        )  # 发送一条纯文本消息
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""

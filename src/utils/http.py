@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from typing import Any, TypedDict
 
 import aiohttp
 
 from .errors import PluginErrorCode, PluginException
-from .log import StructuredLogEmitter
-
-logger = logging.getLogger(__name__)
-structured_log = StructuredLogEmitter(logger=logger)
+from .log import logger
 
 
 class PostJsonSuccessResponse(TypedDict):
@@ -68,7 +64,7 @@ async def post_json(
         "headers": masked_headers,
         "payload": payload,
     }
-    structured_log.debug("http.request", request_error_detail)
+    logger.debug("http.request", request_error_detail)
 
     # 使用 total timeout，覆盖连接、读写和响应等待总耗时。
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
@@ -78,13 +74,12 @@ async def post_json(
                 raw_text = await response.text()
                 masked_response_headers = _mask_headers(dict(response.headers))
                 elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-                structured_log.debug(
+                logger.debug(
                     "http.response",
                     {
                         "elapsed_ms": elapsed_ms,
                         "status_code": response.status,
                         "headers": masked_response_headers,
-                        "body": raw_text,
                     },
                 )
                 # HTTP 错误由状态码判断，保留响应片段用于问题定位。
@@ -158,8 +153,8 @@ async def post_json(
         "elapsed_ms": elapsed_ms,
     }
 
-    structured_log.debug(
-        "http.response",
+    logger.debug(
+        "http.result",
         result,
     )
 

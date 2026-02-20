@@ -146,7 +146,6 @@ async def test_openrouter_image_generate_success(
     assert result.images[0].kind == "http_url"
     assert result.images[1].kind == "data_url"
     assert result.warnings == []
-    assert result.metadata is not None
     assert result.metadata.provider == "openrouter"
     assert result.metadata.model == "test-image-model"
     assert result.metadata.elapsed_ms == 321
@@ -207,7 +206,6 @@ async def test_openrouter_image_generate_reference_validation_warnings(
     assert any(
         "not a valid http(s) URL or data URL" in warning for warning in result.warnings
     )
-    assert result.metadata is not None
     assert result.metadata.provider == "openrouter"
     assert result.metadata.model == "test-image-model"
     assert result.metadata.elapsed_ms == 56
@@ -258,7 +256,6 @@ async def test_openrouter_image_generate_count_mismatch_warning(
 
     assert len(result.images) == 2
     assert any("different from requested" in warning for warning in result.warnings)
-    assert result.metadata is not None
     assert result.metadata.provider == "openrouter"
     assert result.metadata.model == "test-image-model"
     assert result.metadata.elapsed_ms == 78

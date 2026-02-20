@@ -11,7 +11,7 @@ def summarize_log_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: summarize_log_value(item) for key, item in value.items()}
     if isinstance(value, list):
-        limit = 3
+        limit = 5
         items = [summarize_log_value(item) for item in value[:limit]]
         if len(value) > limit:
             items.append(f"<+{len(value) - limit} items>")
@@ -19,9 +19,34 @@ def summarize_log_value(value: Any) -> Any:
     if isinstance(value, str):
         if value.startswith("data:"):
             return f"<data-url len={len(value)}>"
-        if len(value) > 200:
-            return f"{value[:200]}...(truncated)"
+        if len(value) > 400:
+            return f"{value[:400]}...(truncated)"
     return value
+
+
+def resolve_runtime_logger(name: str | None) -> logging.Logger:
+    """返回运行时 logger：有宿主时优先使用宿主 logger，否则回退标准 logging。"""
+    try:
+        from astrbot.api import logger as host_logger
+
+        if isinstance(host_logger, logging.Logger):
+            return host_logger
+    except Exception:
+        pass
+
+    return logging.getLogger(name)
+
+
+def get_structured_logger(
+    name: str | None = None,
+    *,
+    compress: bool = True,
+) -> StructuredLogEmitter:
+    """创建结构化日志输出器。"""
+    return StructuredLogEmitter(
+        logger=resolve_runtime_logger(name),
+        compress=compress,
+    )
 
 
 @dataclass(slots=True)
@@ -39,7 +64,13 @@ class StructuredLogEmitter:
             "event": event,
             "detail": payload,
         }
-        self.logger.log(level, "%s", json.dumps(message, ensure_ascii=False, default=str))
+
+        self.logger.log(
+            level,
+            "%s",
+            json.dumps(message, ensure_ascii=False, default=str),
+            stacklevel=3,
+        )
 
     def debug(self, event: str, detail: dict[str, Any]) -> None:
         self._emit(logging.DEBUG, event, detail)
@@ -52,3 +83,10 @@ class StructuredLogEmitter:
 
     def error(self, event: str, detail: dict[str, Any]) -> None:
         self._emit(logging.ERROR, event, detail)
+
+    def exception(self, message: str, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("stacklevel", 3)
+        self.logger.exception(message, *args, **kwargs)
+
+
+logger = get_structured_logger()
