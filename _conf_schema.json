@@ -41,5 +41,15 @@
     "type": "string",
     "default": "openai/gpt-5-nano",
     "hint": "用于工具/文本相关请求的模型名。"
+  },
+  "save_image_format": {
+    "description": "保存图片格式",
+    "type": "string",
+    "options": [
+      "png",
+      "jpg"
+    ],
+    "default": "jpg",
+    "hint": "保存图片时使用的格式，仅支持 png 或 jpg。"
   }
 }

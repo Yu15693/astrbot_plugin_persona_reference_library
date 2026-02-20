@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from src.storage import PluginStateStore
 from src.storage.keys import CURRENT_IMAGE_MODEL_KEY, PLUGIN_STATE_KEY
@@ -69,8 +71,10 @@ async def test_initialize_keeps_existing_model_without_extra_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_initialize_empty_models_resets_to_empty_string() -> None:
-    """验证：当模型列表为空时，当前模型会被重置为空字符串。"""
+async def test_initialize_empty_models_resets_to_empty_string(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """验证：当模型列表为空时，当前模型会被重置为空字符串并记录 warning。"""
     config: dict[str, object] = {"image_models": []}
     kv = _FakeKV(
         {
@@ -81,11 +85,13 @@ async def test_initialize_empty_models_resets_to_empty_string() -> None:
     )
     store = PluginStateStore(config=config, kv_get=kv.get, kv_put=kv.put)
 
-    state = await store.initialize()
+    with caplog.at_level(logging.WARNING):
+        state = await store.initialize()
 
     assert state[CURRENT_IMAGE_MODEL_KEY] == ""
     assert kv.store[PLUGIN_STATE_KEY] == {CURRENT_IMAGE_MODEL_KEY: ""}
     assert kv.put_calls == [(PLUGIN_STATE_KEY, {CURRENT_IMAGE_MODEL_KEY: ""})]
+    assert "storage.image_models_empty" in caplog.text
 
 
 @pytest.mark.asyncio

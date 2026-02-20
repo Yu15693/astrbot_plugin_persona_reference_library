@@ -88,10 +88,14 @@ async def _save_output_images(
     save_image_format: Literal["png", "jpg"],
 ) -> Path:
     assert output.metadata is not None
-    target_dir = PLUGIN_ROOT / "tmp"
+    base_dir = PLUGIN_ROOT / "tmp"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    run_id = generate_id()
+    target_dir = base_dir / run_id
     target_dir.mkdir(parents=True, exist_ok=True)
     items: list[dict[str, object]] = []
     metadata: dict[str, object] = {
+        "run_id": run_id,
         "case_name": case_name,
         "save_image_format": save_image_format,
         "inference": asdict(output.metadata),
@@ -107,7 +111,7 @@ async def _save_output_images(
         if image.kind == "data_url":
             content, suffix = decode_data_url(image.value)
             content, suffix = _convert_for_save(content, suffix, save_image_format)
-            output_path = target_dir / f"{generate_id()}{suffix}"
+            output_path = target_dir / f"{index}{suffix}"
             save_file(output_path, content)
             item["filename"] = output_path.name
             item["status"] = "saved"
@@ -120,7 +124,7 @@ async def _save_output_images(
             try:
                 content, suffix = await download_http_resource(image.value, timeout_sec=30)
                 content, suffix = _convert_for_save(content, suffix, save_image_format)
-                output_path = target_dir / f"{generate_id()}{suffix}"
+                output_path = target_dir / f"{index}{suffix}"
                 save_file(output_path, content)
                 item["filename"] = output_path.name
                 item["status"] = "saved"
@@ -129,18 +133,18 @@ async def _save_output_images(
                 item["error"] = str(exc)
             items.append(item)
             continue
-        output_path = target_dir / f"{generate_id()}.txt"
+        output_path = target_dir / f"{index}.txt"
         save_file(output_path, image.value)
         item["filename"] = output_path.name
         item["status"] = "saved_as_text_fallback"
         items.append(item)
 
-    metadata_path = target_dir / f"{generate_id()}.metadata.json"
+    metadata_path = target_dir / "metadata.json"
     save_file(
         metadata_path,
         json.dumps(metadata, ensure_ascii=False, indent=2),
     )
-    print(f"[live] metadata saved ({case_name}): {metadata_path}")
+    print(f"[live] artifacts saved ({case_name}): {target_dir}")
     return target_dir
 
 
