@@ -8,7 +8,7 @@ import aiohttp
 from ..utils.io import infer_image_mime
 from .normalize import compact_whitespace, normalize_mime, normalize_text
 
-_SUFFIX_TO_MIME: dict[str, str] = {
+IMAGE_SUFFIX_TO_MIME: dict[str, str] = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
@@ -20,12 +20,14 @@ _SUFFIX_TO_MIME: dict[str, str] = {
     ".tiff": "image/tiff",
 }
 
+IMAGE_SUFFIXES = set(IMAGE_SUFFIX_TO_MIME.keys())
+
 
 def infer_http_url_mime(url: str, default_mime: str = "") -> str:
     """根据 HTTP URL 的扩展名推断 MIME。"""
     parsed = urlparse(normalize_text(url))
     suffix = PurePosixPath(parsed.path).suffix.lower()
-    return _SUFFIX_TO_MIME.get(suffix, default_mime)
+    return IMAGE_SUFFIX_TO_MIME.get(suffix, default_mime)
 
 
 def extract_data_url_mime(data_url: str, default_mime: str = "") -> str:

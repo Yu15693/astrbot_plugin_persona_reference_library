@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+
+from ..images import PluginImage
 
 
 @dataclass(slots=True)
@@ -30,16 +31,8 @@ class ImageGenerateInput:
     """目标分辨率；留空时由上游使用默认行为。"""
     count: int = 1
     """期望生成数量"""
-    reference_images: list[str] = field(default_factory=list)
-    """参考图输入列表，每项可为 http(s) URL 或 data URL。"""
-
-
-@dataclass(slots=True)
-class AdapterImage:
-    kind: Literal["http_url", "data_url"]
-    """图片承载形式：`http_url` 或 `data_url`。"""
-    value: str
-    """图片内容：当 `kind=http_url` 时为 http(s) URL，当 `kind=data_url` 时为 data URL。"""
+    reference_images: list[PluginImage] = field(default_factory=list)
+    """参考图输入列表，每项为 `PluginImage`。"""
 
 
 @dataclass(slots=True)
@@ -54,7 +47,7 @@ class InferenceMetadata:
 
 @dataclass(slots=True)
 class ImageGenerateOutput:
-    images: list[AdapterImage]
+    images: list[PluginImage]
     metadata: InferenceMetadata
     """推理元数据"""
     warnings: list[str] = field(default_factory=list)

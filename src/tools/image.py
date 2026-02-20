@@ -3,61 +3,58 @@ from __future__ import annotations
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Image
 
-from ..providers.schema import AdapterImage
-from ..utils.io import base64_image_to_data_url, data_url_to_base64
+from ..images import PluginImage
 from ..utils.log import logger
-from ..utils.url import is_data_url, is_http_url
 
 
-async def extract_images_from_event(event: AstrMessageEvent) -> list[AdapterImage]:
-    """从消息事件提取图片并统一为 `AdapterImage`（`http_url`/`data_url`）。"""
+async def extract_images_from_event(event: AstrMessageEvent) -> list[PluginImage]:
+    """从消息事件提取图片并统一为 `PluginImage`。"""
 
-    images: list[AdapterImage] = []
+    images: list[PluginImage] = []
     for component in event.get_messages():
         if not isinstance(component, Image):
             continue
         raw = (component.url or component.file or "").strip()
-        if is_http_url(raw):
-            images.append(AdapterImage(kind="http_url", value=raw))
-            continue
-        if is_data_url(raw):
-            images.append(AdapterImage(kind="data_url", value=raw))
-            continue
-        if raw.startswith("base64://"):
+        if raw:
             try:
-                images.append(
-                    AdapterImage(kind="data_url", value=base64_image_to_data_url(raw))
+                images.append(PluginImage.from_raw(raw))
+                continue
+            except ValueError as exc:
+                logger.debug(
+                    "image.parse_raw_fallback_to_base64",
+                    {
+                        "component": repr(component),
+                        "reason": str(exc),
+                    },
                 )
-            except ValueError:
-                logger.exception(
-                    "Failed to convert input base64 image to data URL."
-                )
-            continue
         try:
             encoded = await component.convert_to_base64()
         except Exception:
             logger.exception("Failed to convert input image to base64.")
             continue
         try:
-            images.append(
-                AdapterImage(kind="data_url", value=base64_image_to_data_url(encoded))
-            )
+            images.append(PluginImage.from_base64(encoded))
         except ValueError:
             logger.exception(
-                "Failed to convert normalized base64 image to data URL."
+                "Failed to convert normalized base64 image to PluginImage."
             )
     return images
 
 
-def build_image_send_result(event: AstrMessageEvent, image: AdapterImage):
+def build_image_send_result(event: AstrMessageEvent, image: PluginImage):
     """将适配器输出图片转换为可发送结果。"""
     if image.kind == "http_url":
         return event.image_result(image.value)
-    if image.kind == "data_url":
+    if image.kind in {"data_url", "base64"}:
         try:
-            encoded = data_url_to_base64(image.value)
+            encoded = image.to_base64()
         except ValueError:
-            logger.exception("Failed to convert output data URL to base64.")
+            logger.warning(
+                "image.output_convert_base64_failed",
+                {
+                    "kind": image.kind,
+                },
+            )
             return None
         return event.make_result().base64_image(encoded)
 

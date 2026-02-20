@@ -1,23 +1,17 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Literal
 
 import pytest
+from src.images import save_plugin_image
 from src.providers.config import read_provider_adapter_config
 from src.providers.factory import build_provider_adapter
 from src.providers.openrouter import OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput, ImageGenerateOutput
 from src.utils.id import generate_id
-from src.utils.io import (
-    compress_image_bytes_to_jpg,
-    decode_data_url,
-    download_http_resource,
-    save_file,
-)
+from src.utils.io import save_file
 from src.utils.paths import PLUGIN_ROOT
 from tests.utils.test_env import (
     is_env_enabled,
@@ -34,7 +28,8 @@ OPENROUTER_VALID_ASPECT_RATIOS = {
     "3:2",
 }
 OPENROUTER_VALID_IMAGE_SIZES = {"1K", "2K", "4K"}
-OPENROUTER_SAVE_IMAGE_FORMATS = {"png", "jpg"}
+SAVE_COMPRESS_IMAGE = True
+SAVE_JPEG_QUALITY = 85
 
 
 def _build_live_adapter() -> OpenRouterAdapter:
@@ -62,30 +57,9 @@ def _assert_openrouter_image_config(aspect_ratio: str, image_size: str) -> None:
     ), f"Unsupported image_size for OpenRouter test: {image_size}"
 
 
-def _resolve_save_image_format() -> Literal["png", "jpg"]:
-    value = os.getenv("OPENROUTER_TEST_SAVE_IMAGE_FORMAT", "png").strip().lower()
-    assert (
-        value in OPENROUTER_SAVE_IMAGE_FORMATS
-    ), f"Unsupported OPENROUTER_TEST_SAVE_IMAGE_FORMAT: {value}"
-    if value == "jpg":
-        return "jpg"
-    return "png"
-
-
-def _convert_for_save(
-    content: bytes,
-    suffix: str,
-    save_image_format: Literal["png", "jpg"],
-) -> tuple[bytes, str]:
-    if save_image_format == "jpg":
-        return compress_image_bytes_to_jpg(content), ".jpg"
-    return content, suffix
-
-
 async def _save_output_images(
     case_name: str,
     output: ImageGenerateOutput,
-    save_image_format: Literal["png", "jpg"],
 ) -> Path:
     base_dir = PLUGIN_ROOT / "tmp"
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -96,46 +70,24 @@ async def _save_output_images(
     metadata: dict[str, object] = {
         "run_id": run_id,
         "case_name": case_name,
-        "save_image_format": save_image_format,
+        "compress_image": SAVE_COMPRESS_IMAGE,
+        "jpeg_quality": SAVE_JPEG_QUALITY,
         "inference": asdict(output.metadata),
         "items": items,
         "warnings": output.warnings,
     }
 
     for index, image in enumerate(output.images, start=1):
-        item: dict[str, object] = {
-            "index": index,
-            "kind": image.kind,
-        }
-        if image.kind == "data_url":
-            content, suffix = decode_data_url(image.value)
-            content, suffix = _convert_for_save(content, suffix, save_image_format)
-            output_path = target_dir / f"{index}{suffix}"
-            save_file(output_path, content)
-            item["filename"] = output_path.name
-            item["status"] = "saved"
-            item["source"] = "data_url"
-            item["source_length"] = len(image.value)
-            items.append(item)
-            continue
-        if image.kind == "http_url":
-            item["source_url"] = image.value
-            try:
-                content, suffix = await download_http_resource(image.value, timeout_sec=30)
-                content, suffix = _convert_for_save(content, suffix, save_image_format)
-                output_path = target_dir / f"{index}{suffix}"
-                save_file(output_path, content)
-                item["filename"] = output_path.name
-                item["status"] = "saved"
-            except Exception as exc:
-                item["status"] = "download_failed"
-                item["error"] = str(exc)
-            items.append(item)
-            continue
-        output_path = target_dir / f"{index}.txt"
-        save_file(output_path, image.value)
-        item["filename"] = output_path.name
-        item["status"] = "saved_as_text_fallback"
+        result = await save_plugin_image(
+            target_dir=target_dir,
+            image=image,
+            filename_stem=str(index),
+            enable_compress=SAVE_COMPRESS_IMAGE,
+            jpeg_quality=SAVE_JPEG_QUALITY,
+            http_timeout_sec=30,
+        )
+        item = result.to_metadata_dict()
+        item["index"] = index
         items.append(item)
 
     metadata_path = target_dir / "metadata.json"
@@ -165,14 +117,15 @@ async def test_openrouter_image_generate_live_smoke() -> None:
         image_size=image_size,
         count=1,
     )
-    save_image_format = _resolve_save_image_format()
-
     result = await adapter.image_generate(payload)
     if result.warnings:
         print(f"[live] result warnings: {json.dumps(result.warnings, ensure_ascii=False)}")
     assert result.images
-    assert result.images[0].kind in {"http_url", "data_url"}
-    await _save_output_images("smoke", result, save_image_format)
+    assert result.images[0].kind in {"http_url", "data_url", "base64"}
+    await _save_output_images(
+        "smoke",
+        result,
+    )
 
 
 @pytest.mark.integration
@@ -193,13 +146,14 @@ async def test_openrouter_image_generate_live_resolution_and_clarity() -> None:
         image_size=image_size,
         count=1,
     )
-    save_image_format = _resolve_save_image_format()
-
     result = await adapter.image_generate(payload)
     if result.warnings:
         print(f"[live] result warnings: {json.dumps(result.warnings, ensure_ascii=False)}")
     assert result.images
-    await _save_output_images("resolution_and_clarity", result, save_image_format)
+    await _save_output_images(
+        "resolution_and_clarity",
+        result,
+    )
 
 
 @pytest.mark.integration
@@ -220,7 +174,6 @@ async def test_openrouter_image_generate_live_prompt_two_images_and_n2() -> None
         image_size=image_size,
         count=2,
     )
-    save_image_format = _resolve_save_image_format()
     request_payload, _ = adapter._build_image_generate_payload(
         payload,
         image_model=adapter.image_model,
@@ -233,4 +186,7 @@ async def test_openrouter_image_generate_live_prompt_two_images_and_n2() -> None
     assert result.images
     if len(result.images) != 2:
         assert any("different from requested 2" in warning for warning in result.warnings)
-    await _save_output_images("two_images_n2", result, save_image_format)
+    await _save_output_images(
+        "two_images_n2",
+        result,
+    )

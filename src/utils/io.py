@@ -137,6 +137,7 @@ async def download_http_resource(url: str, timeout_sec: int = 60) -> tuple[bytes
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as response:
+            response.raise_for_status()
             content = await response.read()
             suffix = suffix_from_content_type(response.headers.get("Content-Type", ""))
     return content, suffix

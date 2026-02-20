@@ -5,19 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..images import PluginImage
 from ..utils.dicts import get_dict_value
 from ..utils.errors import PluginErrorCode, PluginException
 from ..utils.http import PostJsonSuccessResponse, post_json
-from ..utils.url import is_data_url, is_http_url
 from .base import ProviderAdapter
 from .schema import (
-    AdapterImage,
     ImageGenerateInput,
     ImageGenerateOutput,
     InferenceMetadata,
-)
-from .utils import (
-    append_adapter_image,
 )
 
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
@@ -74,13 +70,13 @@ class OpenRouterAdapter(ProviderAdapter):
         warnings: list[str] = []
         content: list[dict[str, Any]] = [{"type": "text", "text": payload.prompt}]
         for index, reference_image in enumerate(payload.reference_images):
-            normalized = reference_image.strip()
-            if not normalized:
-                warnings.append(f"reference_images[{index}] is empty and ignored.")
-                continue
-            if not (is_data_url(normalized) or is_http_url(normalized)):
+            if reference_image.kind == "http_url":
+                normalized = reference_image.value
+            elif reference_image.kind in {"data_url", "base64"}:
+                normalized = reference_image.to_data_url()
+            else:
                 warnings.append(
-                    f"reference_images[{index}] is not a valid http(s) URL or data URL and ignored."
+                    f"reference_images[{index}] has unsupported kind '{reference_image.kind}' and ignored."
                 )
                 continue
             content.append(
@@ -164,9 +160,9 @@ def _build_image_modalities_for_model(image_model: str) -> list[str]:
 
 def _extract_openrouter_images(
     data: dict[str, Any],
-) -> list[AdapterImage]:
+) -> list[PluginImage]:
     """提取 OpenRouter 返回中的图片内容（http(s) URL 或 data URL）。"""
-    output: list[AdapterImage] = []
+    output: list[PluginImage] = []
     choices = data.get("choices")
     if not isinstance(choices, list):
         return output
@@ -178,14 +174,9 @@ def _extract_openrouter_images(
             for item in message_images:
                 raw_url = get_dict_value(item, "image_url", "url")
                 if isinstance(raw_url, str):
-                    append_adapter_image(output, raw_url)
-
-        # 结构2（兼容）：choices[].message.content[].image_url.url
-        message_content = get_dict_value(choice, "message", "content")
-        if isinstance(message_content, list):
-            for item in message_content:
-                raw_url = get_dict_value(item, "image_url", "url")
-                if isinstance(raw_url, str):
-                    append_adapter_image(output, raw_url)
+                    try:
+                        output.append(PluginImage.from_raw(raw_url))
+                    except ValueError:
+                        continue
 
     return output

@@ -150,14 +150,14 @@ class MyPlugin(Star):
             prompt=prompt,
             aspect_ratio=ratio,
             image_size=size,
-            reference_images=[image.value for image in reference_images],
+            reference_images=reference_images,
         )
 
         try:
             output = await self.provider_adapter.image_generate(payload)
         except Exception as exc:
             logger.exception("prl draw failed: %s", exc)
-            yield event.plain_result(f"生图失败：{exc}")
+            yield event.plain_result("生图失败")
             return
 
         model_name = output.metadata.model
@@ -172,11 +172,16 @@ class MyPlugin(Star):
             )
         )
 
+        sent_count = 0
         for image in output.images:
             result = build_image_send_result(event, image)
             if result is None:
                 continue
+            sent_count += 1
             yield result
+
+        if sent_count == 0:
+            yield event.plain_result("生图完成，但没有可发送的图片。")
 
         if output.warnings:
             yield event.plain_result("生图警告：\n" + "\n".join(output.warnings))

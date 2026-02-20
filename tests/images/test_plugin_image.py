@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 
 import pytest
+from PIL import Image
 from src.images import PluginImage
 
 _PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z6N0A"
     "AAAASUVORK5CYII="
 )
+
+
+def _build_jpeg_base64() -> str:
+    image = Image.new("RGB", (1, 1), (255, 0, 0))
+    output = BytesIO()
+    image.save(output, format="JPEG")
+    return base64.b64encode(output.getvalue()).decode("ascii")
 
 
 def test_plugin_image_from_http_url() -> None:
@@ -56,6 +65,28 @@ def test_plugin_image_base64_to_data_url() -> None:
 
     assert image.to_data_url().startswith("data:image/png;base64,")
     assert image.to_data_url().endswith(_PNG_BASE64)
+
+
+def test_plugin_image_from_base64_infers_jpeg_mime() -> None:
+    """验证：from_base64 会按内容推断 MIME，而非固定为 image/png。"""
+    jpeg_base64 = _build_jpeg_base64()
+    image = PluginImage.from_base64(jpeg_base64)
+
+    assert image.kind == "base64"
+    assert image.mime == "image/jpeg"
+    assert image.to_data_url().startswith("data:image/jpeg;base64,")
+    assert image.default_mime == "image/png"
+
+
+def test_plugin_image_from_base64_fallback_to_default_mime() -> None:
+    """验证：base64 非图片内容时，mime 回退到 default_mime。"""
+    text_base64 = base64.b64encode(b"hello").decode("ascii")
+    image = PluginImage.from_base64(text_base64, default_mime="image/webp")
+
+    assert image.kind == "base64"
+    assert image.mime == "image/webp"
+    assert image.default_mime == "image/webp"
+    assert image.to_data_url().startswith("data:image/webp;base64,")
 
 
 def test_plugin_image_http_to_data_url_raises() -> None:

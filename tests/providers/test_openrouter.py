@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from src.images import PluginImage
 from src.providers.openrouter import OPENROUTER_DEFAULT_BASE_URL, OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput
 from src.utils.errors import PluginErrorCode, PluginException
@@ -155,7 +156,7 @@ async def test_openrouter_image_generate_success(
 async def test_openrouter_image_generate_reference_validation_warnings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """验证：非法参考图会被忽略并产生 warning，合法参考图会保留。"""
+    """验证：参考图列表中的 PluginImage 会被正确带入请求。"""
     adapter = _make_adapter()
     captured_payload: dict[str, Any] = {}
 
@@ -189,10 +190,8 @@ async def test_openrouter_image_generate_reference_validation_warnings(
             image_size="2K",
             count=1,
             reference_images=[
-                "",
-                "ftp://invalid.example/ref.png",
-                "https://example.com/ref.png",
-                "data:image/png;base64,ZmFrZS1yZWY=",
+                PluginImage.from_http_url("https://example.com/ref.png"),
+                PluginImage.from_data_url("data:image/png;base64,ZmFrZS1yZWY="),
             ],
         )
     )
@@ -202,10 +201,7 @@ async def test_openrouter_image_generate_reference_validation_warnings(
 
     assert captured_payload["payload"]["n"] == 1
     assert len(image_inputs) == 2
-    assert any("is empty and ignored" in warning for warning in result.warnings)
-    assert any(
-        "not a valid http(s) URL or data URL" in warning for warning in result.warnings
-    )
+    assert result.warnings == []
     assert result.metadata.provider == "openrouter"
     assert result.metadata.model == "test-image-model"
     assert result.metadata.elapsed_ms == 56

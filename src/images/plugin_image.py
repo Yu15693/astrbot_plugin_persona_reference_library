@@ -35,12 +35,17 @@ class PluginImage:
     - data_url：优先从 data URL 头部提取。
     - base64：优先按字节头推断，失败时使用默认值（通常为 image/png）。
     """
+    default_mime: str = "image/png"
+    """
+    推断 MIME 失败时使用的回退值，不等同于最终 `mime`。
+    """
 
     def __post_init__(self) -> None:
         normalized_value = normalize_text(self.value)
         if not normalized_value:
             raise ValueError("image value must not be empty.")
 
+        normalized_default_mime = normalize_mime(self.default_mime) or "image/png"
         normalized_mime = normalize_mime(self.mime)
         if self.kind == "http_url":
             if not is_http_url(normalized_value):
@@ -51,16 +56,23 @@ class PluginImage:
             if not is_data_url(normalized_value):
                 raise ValueError("data_url image must be a valid data URL.")
             if not normalized_mime:
-                normalized_mime = extract_data_url_mime(normalized_value, "")
+                normalized_mime = extract_data_url_mime(
+                    normalized_value,
+                    normalized_default_mime,
+                )
         elif self.kind == "base64":
             normalized_value = normalize_base64_payload(normalized_value)
             if not normalized_mime:
-                normalized_mime = infer_base64_mime(normalized_value, "image/png")
+                normalized_mime = infer_base64_mime(
+                    normalized_value,
+                    normalized_default_mime,
+                )
         else:
             raise ValueError(f"unsupported image kind: {self.kind}")
 
         self.value = normalized_value
         self.mime = normalized_mime
+        self.default_mime = normalized_default_mime
 
     @classmethod
     def from_http_url(cls, url: str) -> PluginImage:
@@ -80,7 +92,11 @@ class PluginImage:
         default_mime: str = "image/png",
     ) -> PluginImage:
         """从 base64 字符串创建图像对象。"""
-        return cls(kind="base64", value=base64_value, mime=default_mime)
+        return cls(
+            kind="base64",
+            value=base64_value,
+            default_mime=default_mime,
+        )
 
     @classmethod
     def from_raw(
@@ -116,7 +132,7 @@ class PluginImage:
             return self.value
         raise ValueError(f"unsupported image kind: {self.kind}")
 
-    def to_data_url(self, *, default_mime: str = "image/png") -> str:
+    def to_data_url(self, *, default_mime: str = "") -> str:
         """
         转换为 data URL。
 
@@ -126,11 +142,13 @@ class PluginImage:
         - kind=base64：使用 mime（为空则回退 default_mime）组装 data URL。
         """
         if self.kind == "http_url":
-            raise ValueError("http_url image can not be converted to data URL directly.")
+            raise ValueError(
+                "http_url image can not be converted to data URL directly."
+            )
         if self.kind == "data_url":
             return self.value
         if self.kind == "base64":
-            mime = self.mime or default_mime
+            mime = self.mime or normalize_mime(default_mime) or self.default_mime
             return build_data_url(mime, self.value)
         raise ValueError(f"unsupported image kind: {self.kind}")
 
