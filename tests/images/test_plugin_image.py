@@ -6,6 +6,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 from src.images import PluginImage
+from src.images.codec import parse_raw_image_value
 
 _PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z6N0A"
@@ -18,6 +19,27 @@ def _build_jpeg_base64() -> str:
     output = BytesIO()
     image.save(output, format="JPEG")
     return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+def test_parse_raw_image_value_http_url() -> None:
+    """验证：统一解析入口可识别 http_url。"""
+    kind, value = parse_raw_image_value(" https://example.com/a.png ")
+    assert kind == "http_url"
+    assert value == "https://example.com/a.png"
+
+
+def test_parse_raw_image_value_data_url() -> None:
+    """验证：统一解析入口可识别 data_url。"""
+    kind, value = parse_raw_image_value(f"data:image/png;base64,{_PNG_BASE64}")
+    assert kind == "data_url"
+    assert value.startswith("data:image/png;base64,")
+
+
+def test_parse_raw_image_value_base64() -> None:
+    """验证：统一解析入口可识别并归一化 base64。"""
+    kind, value = parse_raw_image_value(f"base64:// {_PNG_BASE64} ")
+    assert kind == "base64"
+    assert value == _PNG_BASE64
 
 
 def test_plugin_image_from_http_url() -> None:
@@ -37,6 +59,12 @@ def test_plugin_image_from_data_url() -> None:
     assert image.kind == "data_url"
     assert image.mime == "image/png"
     assert image.to_base64() == _PNG_BASE64
+
+
+def test_plugin_image_from_non_base64_data_url_raises() -> None:
+    """验证：非 base64 data_url 在构造阶段会被拒绝。"""
+    with pytest.raises(ValueError, match="valid base64 data URL"):
+        PluginImage.from_data_url("data:text/plain,hello%20world")
 
 
 def test_plugin_image_from_base64_scheme() -> None:

@@ -5,50 +5,41 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from ..utils.io import infer_image_mime
-from .normalize import compact_whitespace, normalize_mime, normalize_text
+from ..utils.io import CONTENT_TYPE_SUFFIX_MAP
+from .codec import decode_base64_payload
+from .io import infer_image_mime
+from .normalize import normalize_mime, normalize_text
 
-IMAGE_SUFFIX_TO_MIME: dict[str, str] = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".svg": "image/svg+xml",
-    ".tif": "image/tiff",
-    ".tiff": "image/tiff",
-}
 
-IMAGE_SUFFIXES = set(IMAGE_SUFFIX_TO_MIME.keys())
+def _build_image_suffix_to_mime() -> dict[str, str]:
+    """从 CONTENT_TYPE_SUFFIX_MAP 中筛选 image 相关 type。"""
+    suffix_to_mime: dict[str, str] = {}
+    for mime, suffix in CONTENT_TYPE_SUFFIX_MAP.items():
+        # 仅筛选 image/*；若多个 MIME 对应同一后缀，保留先出现的规范项。
+        if not mime.startswith("image/"):
+            continue
+        if suffix in suffix_to_mime:
+            continue
+        suffix_to_mime[suffix] = mime
+    return suffix_to_mime
+
+
+_IMAGE_SUFFIX_TO_MIME = _build_image_suffix_to_mime()
+IMAGE_SUFFIXES = set(_IMAGE_SUFFIX_TO_MIME.keys())
 
 
 def infer_http_url_mime(url: str, default_mime: str = "") -> str:
     """根据 HTTP URL 的扩展名推断 MIME。"""
     parsed = urlparse(normalize_text(url))
     suffix = PurePosixPath(parsed.path).suffix.lower()
-    return IMAGE_SUFFIX_TO_MIME.get(suffix, default_mime)
-
-
-def extract_data_url_mime(data_url: str, default_mime: str = "") -> str:
-    """从 data URL 头部提取 MIME。"""
-    normalized = normalize_text(data_url)
-    if not normalized.startswith("data:"):
-        return default_mime
-    header = normalized.split(",", 1)[0]
-    mime = normalize_mime(header[5:].split(";", 1)[0])
-    return mime or default_mime
+    return _IMAGE_SUFFIX_TO_MIME.get(suffix, default_mime)
 
 
 def infer_base64_mime(base64_payload: str, default_mime: str = "image/png") -> str:
     """根据 base64 内容推断 MIME。"""
-    import base64
-    import binascii
-
-    normalized = compact_whitespace(normalize_text(base64_payload))
     try:
-        image_bytes = base64.b64decode(normalized, validate=True)
-    except (ValueError, binascii.Error):
+        image_bytes = decode_base64_payload(base64_payload)
+    except ValueError:
         return default_mime
     return infer_image_mime(image_bytes, default_mime=default_mime)
 

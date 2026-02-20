@@ -4,13 +4,9 @@ import base64
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..utils.io import (
-    compress_image_bytes_to_jpg,
-    download_http_resource,
-    infer_image_mime,
-    save_file,
-    suffix_from_content_type,
-)
+from ..utils.io import download_http_resource, save_file, suffix_from_content_type
+from .codec import data_url_to_bytes
+from .io import compress_image_bytes_to_jpg, infer_image_mime
 from .mime import IMAGE_SUFFIXES
 from .plugin_image import PluginImage
 
@@ -31,50 +27,43 @@ class SavePluginImageResult:
         }
 
 
-def _maybe_compress_image_bytes(
-    content: bytes,
-    suffix: str,
-    *,
-    enable_compress: bool,
-    jpeg_quality: int,
-) -> tuple[bytes, str, bool]:
-    if not enable_compress:
-        return content, suffix, False
-    normalized_suffix = suffix.lower()
-    if normalized_suffix not in IMAGE_SUFFIXES:
-        return content, suffix, False
-    compressed = compress_image_bytes_to_jpg(content, quality=jpeg_quality)
-    return compressed, ".jpg", True
-
-
-def _resolve_image_mime_for_save(content: bytes) -> str:
-    """解析保存阶段使用的图片 MIME，非图片直接报错。"""
-    inferred_mime = infer_image_mime(content, default_mime="")
-    if inferred_mime.startswith("image/"):
-        return inferred_mime
-    raise ValueError("image mime type is not valid.")
-
-
 async def _load_image_content(
     image: PluginImage,
     *,
     http_timeout_sec: int,
 ) -> bytes:
-    """加载图片原始字节；失败时直接抛异常。"""
-    if image.kind == "data_url":
-        return base64.b64decode(image.to_base64(), validate=True)
-
-    if image.kind == "base64":
-        return base64.b64decode(image.value, validate=True)
-
+    """加载图片原始字节。"""
     if image.kind == "http_url":
         content, _ = await download_http_resource(
             image.value,
             timeout_sec=http_timeout_sec,
         )
         return content
+    if image.kind == "data_url":
+        return data_url_to_bytes(image.value)
+    if image.kind == "base64":
+        return base64.b64decode(image.value, validate=True)
 
     raise ValueError(f"unsupported image kind: {image.kind}")
+
+
+def _resolve_output_content(
+    content: bytes,
+    *,
+    enable_compress: bool,
+    jpeg_quality: int,
+) -> tuple[bytes, str, bool]:
+    """解析输出内容、后缀与压缩标记。"""
+    resolved_mime = infer_image_mime(content, default_mime="")
+    if not resolved_mime.startswith("image/"):
+        raise ValueError("image mime type is not valid.")
+
+    suffix = suffix_from_content_type(resolved_mime)
+    if enable_compress and suffix in IMAGE_SUFFIXES:
+        compressed = compress_image_bytes_to_jpg(content, quality=jpeg_quality)
+        return compressed, ".jpg", True
+
+    return content, suffix, False
 
 
 async def save_plugin_image(
@@ -87,18 +76,19 @@ async def save_plugin_image(
     http_timeout_sec: int = 60,
 ) -> SavePluginImageResult:
     """保存单个 PluginImage 到目标目录，失败时抛异常。"""
+
+    # 加载图片
     content = await _load_image_content(
         image,
         http_timeout_sec=http_timeout_sec,
     )
-    resolved_mime = _resolve_image_mime_for_save(content)
-    suffix = suffix_from_content_type(resolved_mime)
-    content, suffix, compressed = _maybe_compress_image_bytes(
+    # 获取后缀，可选压缩
+    content, suffix, compressed = _resolve_output_content(
         content,
-        suffix,
         enable_compress=enable_compress,
         jpeg_quality=jpeg_quality,
     )
+
     output_path = target_dir / f"{filename_stem}{suffix}"
     save_file(output_path, content)
     return SavePluginImageResult(

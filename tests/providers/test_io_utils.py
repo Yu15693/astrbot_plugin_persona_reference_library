@@ -5,11 +5,8 @@ from io import BytesIO
 
 import pytest
 from PIL import Image
-from src.utils.io import (
-    base64_image_to_data_url,
-    compress_image_bytes_to_jpg,
-    data_url_to_base64,
-)
+from src.images.codec import data_url_to_base64
+from src.images.io import base64_image_to_data_url, compress_image_bytes_to_jpg
 
 
 def _build_png_bytes() -> bytes:
@@ -66,6 +63,12 @@ def test_base64_image_to_data_url_invalid_input() -> None:
         base64_image_to_data_url("not-base64@@@")
 
 
+def test_base64_image_to_data_url_rejects_non_base64_data_url() -> None:
+    """验证：非 base64 data URL 输入会抛出 ValueError。"""
+    with pytest.raises(ValueError, match="not valid base64"):
+        base64_image_to_data_url("data:text/plain,hello%20world")
+
+
 def test_data_url_to_base64_for_base64_payload() -> None:
     """验证：可从 base64 data URL 提取并规范化 base64 字符串。"""
     png_bytes = _build_png_bytes()
@@ -78,12 +81,11 @@ def test_data_url_to_base64_for_base64_payload() -> None:
 
 
 def test_data_url_to_base64_for_non_base64_payload() -> None:
-    """验证：可将非 base64 data URL 的负载编码为 base64。"""
+    """验证：非 base64 data URL 会抛出 ValueError。"""
     data_url = "data:text/plain,hello%20world"
 
-    result = data_url_to_base64(data_url)
-
-    assert result == base64.b64encode(b"hello world").decode("ascii")
+    with pytest.raises(ValueError, match="must contain ';base64'"):
+        data_url_to_base64(data_url)
 
 
 def test_data_url_to_base64_invalid_input() -> None:
