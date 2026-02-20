@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from src.providers.openrouter import OpenRouterAdapter
+from src.providers.openrouter import OPENROUTER_DEFAULT_BASE_URL, OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput
 from src.utils.errors import PluginErrorCode, PluginException
 
@@ -28,7 +28,8 @@ def test_openrouter_image_generate_modalities_default() -> None:
             aspect_ratio="1:1",
             image_size="1K",
             count=1,
-        )
+        ),
+        image_model=adapter.image_model,
     )
 
     assert payload["modalities"] == ["image", "text"]
@@ -50,10 +51,39 @@ def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
             aspect_ratio="1:1",
             image_size="1K",
             count=1,
-        )
+        ),
+        image_model=adapter.image_model,
     )
 
     assert payload["modalities"] == ["image"]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_request_uses_default_base_url_when_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证：base_url 留空时，自动回退到 OpenRouter 默认地址。"""
+    adapter = OpenRouterAdapter(
+        base_url="",
+        api_key="test-key",
+        timeout_sec=30,
+        image_model="test-image-model",
+        tool_model="test-tool-model",
+    )
+    assert adapter.base_url == OPENROUTER_DEFAULT_BASE_URL
+    captured: dict[str, Any] = {}
+
+    async def fake_post_json(*, url: str, **_: Any) -> dict[str, Any]:
+        captured["url"] = url
+        return {"data": {"choices": []}, "elapsed_ms": 1}
+
+    monkeypatch.setattr("src.providers.openrouter.post_json", fake_post_json)
+
+    await adapter._request_chat_completions({"messages": []})
+
+    assert (
+        captured["url"] == f"{OPENROUTER_DEFAULT_BASE_URL}/chat/completions"
+    )
 
 
 @pytest.mark.asyncio
@@ -97,7 +127,10 @@ async def test_openrouter_image_generate_success(monkeypatch: pytest.MonkeyPatch
     assert result.images[0].kind == "http_url"
     assert result.images[1].kind == "data_url"
     assert result.warnings == []
-    assert result.elapsed_ms == 321
+    assert result.metadata is not None
+    assert result.metadata.provider == "openrouter"
+    assert result.metadata.model == "test-image-model"
+    assert result.metadata.elapsed_ms == 321
 
 
 @pytest.mark.asyncio
@@ -149,7 +182,10 @@ async def test_openrouter_image_generate_reference_validation_warnings(
     assert len(image_inputs) == 2
     assert any("is empty and ignored" in warning for warning in result.warnings)
     assert any("not a valid http(s) URL or data URL" in warning for warning in result.warnings)
-    assert result.elapsed_ms == 56
+    assert result.metadata is not None
+    assert result.metadata.provider == "openrouter"
+    assert result.metadata.model == "test-image-model"
+    assert result.metadata.elapsed_ms == 56
 
 
 @pytest.mark.asyncio
@@ -189,7 +225,10 @@ async def test_openrouter_image_generate_count_mismatch_warning(
 
     assert len(result.images) == 2
     assert any("different from requested" in warning for warning in result.warnings)
-    assert result.elapsed_ms == 78
+    assert result.metadata is not None
+    assert result.metadata.provider == "openrouter"
+    assert result.metadata.model == "test-image-model"
+    assert result.metadata.elapsed_ms == 78
 
 
 @pytest.mark.asyncio

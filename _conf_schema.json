@@ -1,0 +1,45 @@
+{
+  "provider": {
+    "description": "供应商",
+    "type": "string",
+    "options": [
+      "openrouter"
+    ],
+    "default": "openrouter",
+    "hint": "当前仅支持 openrouter。"
+  },
+  "base_url": {
+    "description": "API Base URL",
+    "type": "string",
+    "default": "",
+    "hint": "供应商 API 基础地址，留空时将使用供应商默认地址。"
+  },
+  "api_key": {
+    "description": "API Key",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "供应商密钥。请妥善保管，避免泄露。"
+  },
+  "timeout_sec": {
+    "description": "请求超时(秒)",
+    "type": "int",
+    "default": 120,
+    "hint": "请求超时时间，单位秒。"
+  },
+  "image_models": {
+    "description": "生图模型列表",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "用于图片生成的候选模型列表，默认使用第一个模型。"
+  },
+  "tool_model": {
+    "description": "工具模型",
+    "type": "string",
+    "default": "openai/gpt-5-nano",
+    "hint": "用于工具/文本相关请求的模型名。"
+  }
+}

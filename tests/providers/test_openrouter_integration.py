@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
@@ -86,13 +87,14 @@ async def _save_output_images(
     output: ImageGenerateOutput,
     save_image_format: Literal["png", "jpg"],
 ) -> Path:
+    assert output.metadata is not None
     target_dir = PLUGIN_ROOT / "tmp"
     target_dir.mkdir(parents=True, exist_ok=True)
     items: list[dict[str, object]] = []
     metadata: dict[str, object] = {
         "case_name": case_name,
         "save_image_format": save_image_format,
-        "elapsed_ms": output.elapsed_ms,
+        "inference": asdict(output.metadata),
         "items": items,
         "warnings": output.warnings,
     }
@@ -216,7 +218,10 @@ async def test_openrouter_image_generate_live_prompt_two_images_and_n2() -> None
         count=2,
     )
     save_image_format = _resolve_save_image_format()
-    request_payload, _ = adapter._build_image_generate_payload(payload)
+    request_payload, _ = adapter._build_image_generate_payload(
+        payload,
+        image_model=adapter.image_model,
+    )
     assert request_payload.get("n") == 2
 
     result = await adapter.image_generate(payload)

@@ -10,11 +10,17 @@ from ..utils.errors import PluginErrorCode, PluginException
 from ..utils.http import PostJsonSuccessResponse, post_json
 from ..utils.url import is_data_url, is_http_url
 from .base import ProviderAdapter
-from .schema import AdapterImage, ImageGenerateInput, ImageGenerateOutput
+from .schema import (
+    AdapterImage,
+    ImageGenerateInput,
+    ImageGenerateOutput,
+    InferenceMetadata,
+)
 from .utils import (
     append_adapter_image,
 )
 
+OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 IMAGE_ONLY_MODALITY_MODEL_KEYWORDS = ("seedream-4.5",)
 
 
@@ -26,6 +32,10 @@ class OpenRouterAdapter(ProviderAdapter):
     image_model: str
     tool_model: str
     provider: str = "openrouter"
+
+    def __post_init__(self) -> None:
+        normalized = self.base_url.strip()
+        self.base_url = normalized or OPENROUTER_DEFAULT_BASE_URL
 
     async def _request_chat_completions(
         self, payload: dict[str, Any]
@@ -55,7 +65,10 @@ class OpenRouterAdapter(ProviderAdapter):
         return response
 
     def _build_image_generate_payload(
-        self, payload: ImageGenerateInput
+        self,
+        payload: ImageGenerateInput,
+        *,
+        image_model: str,
     ) -> tuple[dict[str, Any], list[str]]:
         """构造 OpenRouter 生图请求体。"""
         warnings: list[str] = []
@@ -78,7 +91,7 @@ class OpenRouterAdapter(ProviderAdapter):
             )
 
         request_payload = {
-            "model": self.image_model,
+            "model": image_model,
             "messages": [
                 {
                     "role": "user",
@@ -86,7 +99,7 @@ class OpenRouterAdapter(ProviderAdapter):
                 }
             ],
             "n": payload.count,
-            "modalities": self._build_image_modalities(),
+            "modalities": _build_image_modalities_for_model(image_model),
             "image_config": {
                 "aspect_ratio": payload.aspect_ratio,
                 "image_size": payload.image_size,
@@ -94,15 +107,14 @@ class OpenRouterAdapter(ProviderAdapter):
         }
         return request_payload, warnings
 
-    def _build_image_modalities(self) -> list[str]:
-        model_name = self.image_model.strip().lower()
-        if any(keyword in model_name for keyword in IMAGE_ONLY_MODALITY_MODEL_KEYWORDS):
-            return ["image"]
-        return ["image", "text"]
-
     async def image_generate(self, payload: ImageGenerateInput) -> ImageGenerateOutput:
         """执行图像生成请求并返回统一 ImageGenerateOutput。"""
-        request_payload, warnings = self._build_image_generate_payload(payload)
+        provider = self.provider
+        image_model = self.image_model
+        request_payload, warnings = self._build_image_generate_payload(
+            payload,
+            image_model=image_model,
+        )
 
         response = await self._request_chat_completions(request_payload)
         data = response["data"]
@@ -115,7 +127,7 @@ class OpenRouterAdapter(ProviderAdapter):
                 message="OpenRouter returned no valid image content.",
                 retryable=True,
                 detail={
-                    "provider": self.provider,
+                    "provider": provider,
                     "response_keys": sorted(data.keys()),
                     "elapsed_ms": elapsed_ms,
                 },
@@ -127,8 +139,21 @@ class OpenRouterAdapter(ProviderAdapter):
             )
 
         return ImageGenerateOutput(
-            images=images, warnings=warnings, elapsed_ms=elapsed_ms
+            images=images,
+            metadata=InferenceMetadata(
+                provider=provider,
+                model=image_model,
+                elapsed_ms=elapsed_ms,
+            ),
+            warnings=warnings,
         )
+
+
+def _build_image_modalities_for_model(image_model: str) -> list[str]:
+    model_name = image_model.strip().lower()
+    if any(keyword in model_name for keyword in IMAGE_ONLY_MODALITY_MODEL_KEYWORDS):
+        return ["image"]
+    return ["image", "text"]
 
 
 def _extract_openrouter_images(
