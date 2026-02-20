@@ -4,6 +4,7 @@ import base64
 import binascii
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import unquote_to_bytes
 
 import aiohttp
 
@@ -55,6 +56,80 @@ def decode_data_url(data_url: str) -> tuple[bytes, str]:
         return base64.b64decode(encoded, validate=True), suffix
     except (ValueError, binascii.Error):
         return encoded.encode("utf-8"), ".txt"
+
+
+def data_url_to_base64(data_url: str) -> str:
+    """将 data URL 转换为纯 base64 字符串。"""
+    normalized = data_url.strip()
+    if not normalized.startswith("data:"):
+        raise ValueError("data_url must start with 'data:'.")
+    if "," not in normalized:
+        raise ValueError("data_url must contain ',' separator.")
+
+    header, payload = normalized.split(",", 1)
+    if ";base64" in header.lower():
+        payload = "".join(payload.split())
+        try:
+            raw_bytes = base64.b64decode(payload, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("data_url contains invalid base64 payload.") from exc
+        return base64.b64encode(raw_bytes).decode("ascii")
+
+    raw_bytes = unquote_to_bytes(payload)
+    return base64.b64encode(raw_bytes).decode("ascii")
+
+
+def infer_image_mime(image_bytes: bytes, default_mime: str = "image/png") -> str:
+    """根据图片字节头推断 MIME，无法识别时回退默认值。"""
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"GIF87a") or image_bytes.startswith(b"GIF89a"):
+        return "image/gif"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if image_bytes.startswith(b"BM"):
+        return "image/bmp"
+    if image_bytes.startswith(b"II*\x00") or image_bytes.startswith(b"MM\x00*"):
+        return "image/tiff"
+
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except Exception:
+        return default_mime
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            format_name = (image.format or "").upper()
+            mime = Image.MIME.get(format_name)
+            if isinstance(mime, str) and mime:
+                return mime
+    except (UnidentifiedImageError, OSError, ValueError):
+        return default_mime
+
+    return default_mime
+
+
+def base64_image_to_data_url(base64_value: str, default_mime: str = "image/png") -> str:
+    """将 base64 图片字符串转换为 data URL。"""
+    normalized = base64_value.strip()
+    if not normalized:
+        raise ValueError("base64_value is empty.")
+    if normalized.startswith("data:"):
+        return normalized
+    if normalized.startswith("base64://"):
+        normalized = normalized.removeprefix("base64://")
+
+    # 去掉可能存在的空白，兼容跨行/带空格的输入。
+    normalized = "".join(normalized.split())
+    try:
+        image_bytes = base64.b64decode(normalized, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("base64_value is not valid base64 content.") from exc
+
+    mime = infer_image_mime(image_bytes, default_mime=default_mime)
+    return f"data:{mime};base64,{normalized}"
 
 
 async def download_http_resource(url: str, timeout_sec: int = 60) -> tuple[bytes, str]:

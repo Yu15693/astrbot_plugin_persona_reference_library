@@ -24,10 +24,10 @@ class ProviderAdapterConfig:
 class ImageGenerateInput:
     prompt: str
     """生图提示词"""
-    aspect_ratio: str
-    """目标宽高比"""
-    image_size: str
-    """目标分辨率"""
+    aspect_ratio: str = ""
+    """目标宽高比；留空时由上游使用默认行为。"""
+    image_size: str = ""
+    """目标分辨率；留空时由上游使用默认行为。"""
     count: int = 1
     """期望生成数量"""
     reference_images: list[str] = field(default_factory=list)

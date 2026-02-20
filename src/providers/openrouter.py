@@ -90,7 +90,16 @@ class OpenRouterAdapter(ProviderAdapter):
                 }
             )
 
-        request_payload = {
+        image_config = {
+            key: value
+            for key, value in {
+                "aspect_ratio": payload.aspect_ratio.strip(),
+                "image_size": payload.image_size.strip(),
+            }.items()
+            if value
+        }
+
+        request_payload: dict[str, Any] = {
             "model": image_model,
             "messages": [
                 {
@@ -100,10 +109,7 @@ class OpenRouterAdapter(ProviderAdapter):
             ],
             "n": payload.count,
             "modalities": _build_image_modalities_for_model(image_model),
-            "image_config": {
-                "aspect_ratio": payload.aspect_ratio,
-                "image_size": payload.image_size,
-            },
+            **({"image_config": image_config} if image_config else {}),
         }
         return request_payload, warnings
 

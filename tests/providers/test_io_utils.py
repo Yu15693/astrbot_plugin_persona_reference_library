@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
 from io import BytesIO
 
 import pytest
 from PIL import Image
-from src.utils.io import compress_image_bytes_to_jpg
+from src.utils.io import (
+    base64_image_to_data_url,
+    compress_image_bytes_to_jpg,
+    data_url_to_base64,
+)
 
 
 def _build_png_bytes() -> bytes:
@@ -33,3 +38,55 @@ def test_compress_image_bytes_to_jpg_invalid_quality() -> None:
 
     with pytest.raises(ValueError, match="quality must be in \\[1, 95\\]"):
         compress_image_bytes_to_jpg(png_bytes, quality=0)
+
+
+def test_base64_image_to_data_url_infers_png_mime() -> None:
+    """验证：base64 图片可被转换为 data URL，且能推断 PNG 类型。"""
+    png_bytes = _build_png_bytes()
+    encoded = base64.b64encode(png_bytes).decode("ascii")
+
+    data_url = base64_image_to_data_url(encoded)
+
+    assert data_url.startswith("data:image/png;base64,")
+
+
+def test_base64_image_to_data_url_supports_base64_scheme() -> None:
+    """验证：支持 base64:// 前缀输入。"""
+    png_bytes = _build_png_bytes()
+    encoded = base64.b64encode(png_bytes).decode("ascii")
+
+    data_url = base64_image_to_data_url(f"base64://{encoded}")
+
+    assert data_url.startswith("data:image/png;base64,")
+
+
+def test_base64_image_to_data_url_invalid_input() -> None:
+    """验证：非法 base64 输入会抛出 ValueError。"""
+    with pytest.raises(ValueError, match="not valid base64"):
+        base64_image_to_data_url("not-base64@@@")
+
+
+def test_data_url_to_base64_for_base64_payload() -> None:
+    """验证：可从 base64 data URL 提取并规范化 base64 字符串。"""
+    png_bytes = _build_png_bytes()
+    encoded = base64.b64encode(png_bytes).decode("ascii")
+    data_url = f"data:image/png;base64,{encoded}"
+
+    result = data_url_to_base64(data_url)
+
+    assert result == encoded
+
+
+def test_data_url_to_base64_for_non_base64_payload() -> None:
+    """验证：可将非 base64 data URL 的负载编码为 base64。"""
+    data_url = "data:text/plain,hello%20world"
+
+    result = data_url_to_base64(data_url)
+
+    assert result == base64.b64encode(b"hello world").decode("ascii")
+
+
+def test_data_url_to_base64_invalid_input() -> None:
+    """验证：非法 data URL 会抛出 ValueError。"""
+    with pytest.raises(ValueError, match="must start with 'data:'"):
+        data_url_to_base64("https://example.com/a.png")

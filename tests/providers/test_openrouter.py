@@ -58,6 +58,21 @@ def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
     assert payload["modalities"] == ["image"]
 
 
+def test_openrouter_image_generate_without_image_config_fields() -> None:
+    """验证：未指定比例和分辨率时，不传 image_config 字段。"""
+    adapter = _make_adapter()
+
+    payload, _ = adapter._build_image_generate_payload(
+        ImageGenerateInput(
+            prompt="A cat on the moon",
+            count=1,
+        ),
+        image_model=adapter.image_model,
+    )
+
+    assert "image_config" not in payload
+
+
 @pytest.mark.asyncio
 async def test_openrouter_request_uses_default_base_url_when_empty(
     monkeypatch: pytest.MonkeyPatch,
@@ -81,13 +96,13 @@ async def test_openrouter_request_uses_default_base_url_when_empty(
 
     await adapter._request_chat_completions({"messages": []})
 
-    assert (
-        captured["url"] == f"{OPENROUTER_DEFAULT_BASE_URL}/chat/completions"
-    )
+    assert captured["url"] == f"{OPENROUTER_DEFAULT_BASE_URL}/chat/completions"
 
 
 @pytest.mark.asyncio
-async def test_openrouter_image_generate_success(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_openrouter_image_generate_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """验证：上游返回合法图片 URL 时可正确归一化输出。"""
     adapter = _make_adapter()
 
@@ -98,12 +113,16 @@ async def test_openrouter_image_generate_success(monkeypatch: pytest.MonkeyPatch
                     {
                         "message": {
                             "images": [
-                                {"image_url": {"url": "https://example.com/image-1.png"}},
+                                {
+                                    "image_url": {
+                                        "url": "https://example.com/image-1.png"
+                                    }
+                                },
                                 {
                                     "image_url": {
                                         "url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="
                                     }
-                                }
+                                },
                             ]
                         }
                     }
@@ -149,7 +168,11 @@ async def test_openrouter_image_generate_reference_validation_warnings(
                     {
                         "message": {
                             "images": [
-                                {"image_url": {"url": "https://example.com/image-1.png"}}
+                                {
+                                    "image_url": {
+                                        "url": "https://example.com/image-1.png"
+                                    }
+                                }
                             ]
                         }
                     }
@@ -181,7 +204,9 @@ async def test_openrouter_image_generate_reference_validation_warnings(
     assert captured_payload["payload"]["n"] == 1
     assert len(image_inputs) == 2
     assert any("is empty and ignored" in warning for warning in result.warnings)
-    assert any("not a valid http(s) URL or data URL" in warning for warning in result.warnings)
+    assert any(
+        "not a valid http(s) URL or data URL" in warning for warning in result.warnings
+    )
     assert result.metadata is not None
     assert result.metadata.provider == "openrouter"
     assert result.metadata.model == "test-image-model"
@@ -202,8 +227,16 @@ async def test_openrouter_image_generate_count_mismatch_warning(
                     {
                         "message": {
                             "images": [
-                                {"image_url": {"url": "https://example.com/image-1.png"}},
-                                {"image_url": {"url": "https://example.com/image-2.png"}},
+                                {
+                                    "image_url": {
+                                        "url": "https://example.com/image-1.png"
+                                    }
+                                },
+                                {
+                                    "image_url": {
+                                        "url": "https://example.com/image-2.png"
+                                    }
+                                },
                             ]
                         }
                     }
@@ -240,7 +273,9 @@ async def test_openrouter_image_generate_no_images_raises_upstream_error(
 
     async def fake_request(_: dict[str, Any]) -> dict[str, Any]:
         return {
-            "data": {"choices": [{"message": {"content": [{"type": "text", "text": "ok"}]}}]},
+            "data": {
+                "choices": [{"message": {"content": [{"type": "text", "text": "ok"}]}}]
+            },
             "elapsed_ms": 15,
         }
 

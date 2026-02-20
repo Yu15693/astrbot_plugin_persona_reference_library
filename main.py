@@ -7,6 +7,7 @@ from .src.providers import (
     build_provider_adapter,
     read_provider_adapter_config,
 )
+from .src.providers.schema import ImageGenerateInput
 from .src.storage import PluginStateStore
 from .src.storage.keys import (
     CONFIG_API_KEY_KEY,
@@ -17,6 +18,9 @@ from .src.storage.keys import (
     CONFIG_TOOL_MODEL_KEY,
     CURRENT_IMAGE_MODEL_KEY,
 )
+from .src.tools.draw_args import parse_draw_args
+from .src.tools.image import build_image_send_result, extract_images_from_event
+from .src.utils.args import extract_command_args
 
 
 class MyPlugin(Star):
@@ -64,6 +68,7 @@ class MyPlugin(Star):
         await self.state_store.initialize()
         # 初始化供应商适配器
         self.provider_adapter = await self._build_provider_adapter_from_store()
+        assert self.provider_adapter is not None
 
     @filter.command_group("prl")
     def prl(self) -> None:
@@ -113,6 +118,41 @@ class MyPlugin(Star):
         self.provider_adapter.image_model = applied_model
 
         yield event.plain_result(f"已切换生图模型为：{applied_model}")
+
+    @prl.command("draw")
+    async def prl_draw(self, event: AstrMessageEvent):
+        """生图指令，可选 `ratio=` 和 `size=` 参数，消息附图会作为参考图。"""
+        draw_args = extract_command_args(event.message_str, ("prl", "draw"))
+        ratio, size, prompt = parse_draw_args(draw_args)
+        if not prompt:
+            yield event.plain_result(
+                "提示词不能为空。用法：/prl draw [ratio=16:9] [size=1K] <prompt>"
+            )
+            return
+
+        reference_images = await extract_images_from_event(event)
+        payload = ImageGenerateInput(
+            prompt=prompt,
+            aspect_ratio=ratio,
+            image_size=size,
+            reference_images=[image.value for image in reference_images],
+        )
+
+        try:
+            output = await self.provider_adapter.image_generate(payload)
+        except Exception as exc:
+            logger.exception("prl draw failed: %s", exc)
+            yield event.plain_result(f"生图失败：{exc}")
+            return
+
+        for image in output.images:
+            result = build_image_send_result(event, image)
+            if result is None:
+                continue
+            yield result
+
+        if output.warnings:
+            yield event.plain_result("生图警告：\n" + "\n".join(output.warnings))
 
     # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
     @filter.command("helloworld")
