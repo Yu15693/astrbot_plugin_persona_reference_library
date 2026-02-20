@@ -4,7 +4,11 @@ import logging
 
 import pytest
 from src.storage import PluginStateStore
-from src.storage.keys import CURRENT_IMAGE_MODEL_KEY, PLUGIN_STATE_KEY
+from src.storage.keys import (
+    CONFIG_IMAGE_MODELS_KEY,
+    CURRENT_IMAGE_MODEL_KEY,
+    PLUGIN_STATE_KEY,
+)
 from src.storage.state_store import normalize_image_models
 
 
@@ -131,3 +135,20 @@ async def test_sync_to_kv_persists_full_state_snapshot() -> None:
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_config_value_reads_existing_and_default_values() -> None:
+    """验证：可按 key 读取配置值，不存在时返回默认值。"""
+    config: dict[str, object] = {
+        CONFIG_IMAGE_MODELS_KEY: ["model-a", "model-b"],
+    }
+    kv = _FakeKV()
+    store = PluginStateStore(config=config, kv_get=kv.get, kv_put=kv.put)
+    await store.initialize()
+
+    image_models = store.get_config_value(CONFIG_IMAGE_MODELS_KEY, [])
+    not_exists = store.get_config_value("missing_key", "fallback")
+
+    assert image_models == ["model-a", "model-b"]
+    assert not_exists == "fallback"

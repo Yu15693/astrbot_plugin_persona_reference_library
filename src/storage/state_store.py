@@ -5,7 +5,11 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from ..utils.log import StructuredLogEmitter
-from .keys import CURRENT_IMAGE_MODEL_KEY, PLUGIN_STATE_KEY
+from .keys import (
+    CONFIG_IMAGE_MODELS_KEY,
+    CURRENT_IMAGE_MODEL_KEY,
+    PLUGIN_STATE_KEY,
+)
 from .schema import PluginState
 
 structured_log = StructuredLogEmitter(logger=logging.getLogger(__name__))
@@ -78,8 +82,10 @@ class PluginStateStore:
     async def initialize(self) -> PluginState:
         """初始化顺序：先规范化 config，再初始化 state，最后全量写入 KV。"""
         async with self._lock:
-            image_models = normalize_image_models(self._config.get("image_models"))
-            self._config["image_models"] = list(image_models)
+            image_models = normalize_image_models(
+                self._config.get(CONFIG_IMAGE_MODELS_KEY)
+            )
+            self._config[CONFIG_IMAGE_MODELS_KEY] = list(image_models)
 
             if not image_models:
                 structured_log.warning(
@@ -99,6 +105,10 @@ class PluginStateStore:
 
             await self._sync_to_kv_locked()
             return self._snapshot()
+
+    def get_config_value(self, key: str, default: object = None) -> object:
+        """读取配置值。"""
+        return self._config.get(key, default)
 
     async def get_value(self, key: str, default: str = "") -> str:
         """读取缓存中的状态值。"""
@@ -137,7 +147,7 @@ class PluginStateStore:
         await self._kv_put(PLUGIN_STATE_KEY, self._snapshot())
 
     def _validate_current_image_model(self, value: str) -> str:
-        image_models = self._config.get("image_models")
+        image_models = self._config.get(CONFIG_IMAGE_MODELS_KEY)
         if value and value not in image_models:
             raise ValueError(f"Unsupported image model: {value}")
         return value
