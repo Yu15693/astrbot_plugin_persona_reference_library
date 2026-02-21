@@ -5,7 +5,6 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pytest
-from src.images import save_plugin_image
 from src.providers.config import read_provider_adapter_config
 from src.providers.factory import build_provider_adapter
 from src.providers.openrouter import OpenRouterAdapter
@@ -78,16 +77,22 @@ async def _save_output_images(
     }
 
     for index, image in enumerate(output.images, start=1):
-        result = await save_plugin_image(
-            target_dir=target_dir,
-            image=image,
-            filename_stem=str(index),
-            enable_compress=SAVE_COMPRESS_IMAGE,
-            jpeg_quality=SAVE_JPEG_QUALITY,
-            http_timeout_sec=30,
+        image_blob = await image.convert_to_image_blob(timeout_sec=30)
+        output_blob = (
+            image_blob.compress_to_jpg(quality=SAVE_JPEG_QUALITY)
+            if SAVE_COMPRESS_IMAGE
+            else image_blob
         )
-        item = result.to_metadata_dict()
-        item["index"] = index
+        compressed = output_blob is not image_blob
+        output_path = target_dir / f"{index}.{output_blob.extension}"
+        output_blob.save(output_path)
+        item = {
+            "index": index,
+            "kind": image.kind,
+            "mime": image.mime,
+            "filename": output_path.name,
+            "compressed": compressed,
+        }
         items.append(item)
 
     metadata_path = target_dir / "metadata.json"
@@ -174,7 +179,7 @@ async def test_openrouter_image_generate_live_prompt_two_images_and_n2() -> None
         image_size=image_size,
         count=2,
     )
-    request_payload, _ = adapter._build_image_generate_payload(
+    request_payload, _ = await adapter._build_image_generate_payload(
         payload,
         image_model=adapter.image_model,
     )

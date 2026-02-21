@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from src.images import PluginImage
 from src.providers.openrouter import OPENROUTER_DEFAULT_BASE_URL, OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput
+from src.resources import ResourceSpec
 from src.utils.errors import PluginErrorCode, PluginException
 
 
@@ -19,11 +19,12 @@ def _make_adapter() -> OpenRouterAdapter:
     )
 
 
-def test_openrouter_image_generate_modalities_default() -> None:
+@pytest.mark.asyncio
+async def test_openrouter_image_generate_modalities_default() -> None:
     """验证：默认模型使用 image+text 双模态。"""
     adapter = _make_adapter()
 
-    payload, _ = adapter._build_image_generate_payload(
+    payload, _ = await adapter._build_image_generate_payload(
         ImageGenerateInput(
             prompt="A cat on the moon",
             aspect_ratio="1:1",
@@ -36,7 +37,8 @@ def test_openrouter_image_generate_modalities_default() -> None:
     assert payload["modalities"] == ["image", "text"]
 
 
-def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
+@pytest.mark.asyncio
+async def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
     """验证：seedream 系列模型只使用 image 单模态。"""
     adapter = OpenRouterAdapter(
         base_url="https://openrouter.ai/api/v1",
@@ -46,7 +48,7 @@ def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
         tool_model="test-tool-model",
     )
 
-    payload, _ = adapter._build_image_generate_payload(
+    payload, _ = await adapter._build_image_generate_payload(
         ImageGenerateInput(
             prompt="A cat on the moon",
             aspect_ratio="1:1",
@@ -59,11 +61,12 @@ def test_openrouter_image_generate_modalities_seedream_image_only() -> None:
     assert payload["modalities"] == ["image"]
 
 
-def test_openrouter_image_generate_without_image_config_fields() -> None:
+@pytest.mark.asyncio
+async def test_openrouter_image_generate_without_image_config_fields() -> None:
     """验证：未指定比例和分辨率时，不传 image_config 字段。"""
     adapter = _make_adapter()
 
-    payload, _ = adapter._build_image_generate_payload(
+    payload, _ = await adapter._build_image_generate_payload(
         ImageGenerateInput(
             prompt="A cat on the moon",
             count=1,
@@ -153,10 +156,10 @@ async def test_openrouter_image_generate_success(
 
 
 @pytest.mark.asyncio
-async def test_openrouter_image_generate_reference_validation_warnings(
+async def test_openrouter_image_generate_reference_images_to_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """验证：参考图列表中的 PluginImage 会被正确带入请求。"""
+    """验证：参考图会按协议拼入 image_url 输入。"""
     adapter = _make_adapter()
     captured_payload: dict[str, Any] = {}
 
@@ -190,8 +193,9 @@ async def test_openrouter_image_generate_reference_validation_warnings(
             image_size="2K",
             count=1,
             reference_images=[
-                PluginImage.from_http_url("https://example.com/ref.png"),
-                PluginImage.from_data_url("data:image/png;base64,ZmFrZS1yZWY="),
+                ResourceSpec.from_http_url("https://example.com/ref.png"),
+                ResourceSpec.from_data_url("data:image/png;base64,ZmFrZS1yZWY="),
+                ResourceSpec.from_base64("ZmFrZS1yZWY=", mime="image/png"),
             ],
         )
     )
@@ -200,7 +204,7 @@ async def test_openrouter_image_generate_reference_validation_warnings(
     image_inputs = [item for item in content if item.get("type") == "image_url"]
 
     assert captured_payload["payload"]["n"] == 1
-    assert len(image_inputs) == 2
+    assert len(image_inputs) == 3
     assert result.warnings == []
     assert result.metadata.provider == "openrouter"
     assert result.metadata.model == "test-image-model"

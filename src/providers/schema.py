@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..images import PluginImage
+from ..resources import ResourceSpec
 
 
 @dataclass(slots=True)
@@ -31,8 +31,8 @@ class ImageGenerateInput:
     """目标分辨率；留空时由上游使用默认行为。"""
     count: int = 1
     """期望生成数量"""
-    reference_images: list[PluginImage] = field(default_factory=list)
-    """参考图输入列表，每项为 `PluginImage`。"""
+    reference_images: list[ResourceSpec] = field(default_factory=list)
+    """参考图输入列表，每项为 `ResourceSpec`。"""
 
 
 @dataclass(slots=True)
@@ -47,7 +47,7 @@ class InferenceMetadata:
 
 @dataclass(slots=True)
 class ImageGenerateOutput:
-    images: list[PluginImage]
+    images: list[ResourceSpec]
     metadata: InferenceMetadata
     """推理元数据"""
     warnings: list[str] = field(default_factory=list)

@@ -11,8 +11,21 @@ from .errors import PluginErrorCode, PluginException
 from .log import logger
 
 
+class HttpResponse(TypedDict):
+    status_code: int
+    headers: dict[str, str]
+    body: bytes
+    elapsed_ms: int
+
+
 class PostJsonSuccessResponse(TypedDict):
     data: dict[str, Any]
+    elapsed_ms: int
+
+
+class GetBytesSuccessResponse(TypedDict):
+    data: bytes
+    mime: str
     elapsed_ms: int
 
 
@@ -27,26 +40,33 @@ def _mask_headers(headers: dict[str, str]) -> dict[str, str]:
     return masked
 
 
-async def post_json(
+async def request(
     *,
+    method: str,
     url: str,
-    payload: dict[str, Any],
-    headers: dict[str, str],
-    timeout_sec: int = 30,
+    headers: dict[str, str] | None = None,
+    payload: dict[str, Any] | None = None,
+    timeout_sec: int = 60,
     source: str = "Upstream",
-) -> PostJsonSuccessResponse:
-    """发送 JSON POST 请求并返回结果对象。
-
-    约定：
-    - 传输层错误映射为 `NETWORK_ERROR/TIMEOUT`
-    - 非 2xx HTTP 响应映射为 `UPSTREAM_ERROR`
-    - 成功响应必须是 JSON object（dict）
-    - 成功返回结构：`{"data": <json_object>, "elapsed_ms": <int>}`
-    """
+) -> HttpResponse:
     if timeout_sec <= 0:
         raise PluginException(
             code=PluginErrorCode.UPSTREAM_ERROR,
             message="timeout_sec must be > 0.",
+            retryable=False,
+            detail={
+                "source": source,
+                "method": method,
+                "url": url,
+                "timeout_sec": timeout_sec,
+            },
+        )
+
+    normalized_method = method.strip().upper()
+    if not normalized_method:
+        raise PluginException(
+            code=PluginErrorCode.UPSTREAM_ERROR,
+            message="method must not be empty.",
             retryable=False,
             detail={
                 "source": source,
@@ -55,10 +75,12 @@ async def post_json(
             },
         )
 
-    masked_headers = _mask_headers(headers)
+    normalized_headers = headers or {}
+    masked_headers = _mask_headers(normalized_headers)
     started_at = time.perf_counter()
     request_error_detail = {
         "source": source,
+        "method": normalized_method,
         "url": url,
         "timeout_sec": timeout_sec,
         "headers": masked_headers,
@@ -66,13 +88,22 @@ async def post_json(
     }
     logger.debug("http.request", request_error_detail)
 
-    # 使用 total timeout，覆盖连接、读写和响应等待总耗时。
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload, headers=headers) as response:
-                raw_text = await response.text()
-                masked_response_headers = _mask_headers(dict(response.headers))
+            request_kwargs: dict[str, Any] = {"headers": normalized_headers}
+            if payload is not None:
+                request_kwargs["json"] = payload
+
+            async with session.request(
+                normalized_method,
+                url,
+                **request_kwargs,
+            ) as response:
+                body = await response.read()
+                response_headers = dict(response.headers)
+
+                masked_response_headers = _mask_headers(response_headers)
                 elapsed_ms = int((time.perf_counter() - started_at) * 1000)
                 logger.debug(
                     "http.response",
@@ -82,7 +113,8 @@ async def post_json(
                         "headers": masked_response_headers,
                     },
                 )
-                # HTTP 错误由状态码判断，保留响应片段用于问题定位。
+
+                # HTTP 错误由状态码判断，保留响应片段用于问题定位
                 if response.status >= 400:
                     raise PluginException(
                         code=PluginErrorCode.UPSTREAM_ERROR,
@@ -93,9 +125,16 @@ async def post_json(
                             "elapsed_ms": elapsed_ms,
                             "status_code": response.status,
                             "headers": masked_response_headers,
-                            "body": raw_text,
+                            "body": body.decode("utf-8", errors="replace"),
                         },
                     )
+
+                return {
+                    "status_code": response.status,
+                    "headers": response_headers,
+                    "body": body,
+                    "elapsed_ms": elapsed_ms,
+                }
 
     except asyncio.TimeoutError as exc:
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -119,10 +158,36 @@ async def post_json(
             },
         ) from exc
 
-    # 网络链路成功后再解析 JSON，便于区分“传输错误”与“响应格式错误”。
+
+async def post_json(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout_sec: int = 60,
+    source: str = "Upstream",
+) -> PostJsonSuccessResponse:
+    response = await request(
+        method="POST",
+        url=url,
+        headers=headers,
+        payload=payload,
+        timeout_sec=timeout_sec,
+        source=source,
+    )
+
+    request_error_detail = {
+        "source": source,
+        "method": "POST",
+        "url": url,
+        "timeout_sec": timeout_sec,
+        "headers": _mask_headers(headers),
+        "payload": payload,
+    }
+
+    raw_text = response["body"].decode("utf-8", errors="replace")
     try:
         data = json.loads(raw_text)
-
     except json.JSONDecodeError as exc:
         raise PluginException(
             code=PluginErrorCode.UPSTREAM_ERROR,
@@ -130,7 +195,7 @@ async def post_json(
             retryable=True,
             detail={
                 **request_error_detail,
-                "elapsed_ms": int((time.perf_counter() - started_at) * 1000),
+                "elapsed_ms": response["elapsed_ms"],
                 "body": raw_text,
             },
         ) from exc
@@ -142,20 +207,37 @@ async def post_json(
             retryable=True,
             detail={
                 **request_error_detail,
-                "elapsed_ms": int((time.perf_counter() - started_at) * 1000),
+                "elapsed_ms": response["elapsed_ms"],
                 "response_type": type(data).__name__,
             },
         )
 
-    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-    result = {
+    logger.debug("http.response.data", data)
+
+    return {
         "data": data,
-        "elapsed_ms": elapsed_ms,
+        "elapsed_ms": response["elapsed_ms"],
     }
 
-    logger.debug(
-        "http.result",
-        result,
-    )
 
-    return result
+async def get_bytes(
+    *,
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout_sec: int = 60,
+    source: str = "Upstream",
+) -> GetBytesSuccessResponse:
+    response = await request(
+        method="GET",
+        url=url,
+        headers=headers,
+        timeout_sec=timeout_sec,
+        source=source,
+    )
+    content_type = response["headers"].get("Content-Type", "")
+    mime = content_type.split(";", 1)[0].strip().lower()
+    return {
+        "data": response["body"],
+        "mime": mime,
+        "elapsed_ms": response["elapsed_ms"],
+    }

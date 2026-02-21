@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..images import PluginImage
+from ..resources import ResourceSpec
 from ..utils.dicts import get_dict_value
 from ..utils.errors import PluginErrorCode, PluginException
 from ..utils.http import PostJsonSuccessResponse, post_json
@@ -60,7 +60,7 @@ class OpenRouterAdapter(ProviderAdapter):
         )
         return response
 
-    def _build_image_generate_payload(
+    async def _build_image_generate_payload(
         self,
         payload: ImageGenerateInput,
         *,
@@ -71,9 +71,9 @@ class OpenRouterAdapter(ProviderAdapter):
         content: list[dict[str, Any]] = [{"type": "text", "text": payload.prompt}]
         for index, reference_image in enumerate(payload.reference_images):
             if reference_image.kind == "http_url":
-                normalized = reference_image.value
+                normalized = reference_image.raw
             elif reference_image.kind in {"data_url", "base64"}:
-                normalized = reference_image.to_data_url()
+                normalized = await reference_image.to_data_url(default_mime="image/png")
             else:
                 warnings.append(
                     f"reference_images[{index}] has unsupported kind '{reference_image.kind}' and ignored."
@@ -113,7 +113,7 @@ class OpenRouterAdapter(ProviderAdapter):
         """执行图像生成请求并返回统一 ImageGenerateOutput。"""
         provider = self.provider
         image_model = self.image_model
-        request_payload, warnings = self._build_image_generate_payload(
+        request_payload, warnings = await self._build_image_generate_payload(
             payload,
             image_model=image_model,
         )
@@ -160,9 +160,9 @@ def _build_image_modalities_for_model(image_model: str) -> list[str]:
 
 def _extract_openrouter_images(
     data: dict[str, Any],
-) -> list[PluginImage]:
+) -> list[ResourceSpec]:
     """提取 OpenRouter 返回中的图片内容（http(s) URL 或 data URL）。"""
-    output: list[PluginImage] = []
+    output: list[ResourceSpec] = []
     choices = data.get("choices")
     if not isinstance(choices, list):
         return output
@@ -174,8 +174,14 @@ def _extract_openrouter_images(
             for item in message_images:
                 raw_url = get_dict_value(item, "image_url", "url")
                 if isinstance(raw_url, str):
+                    normalized = raw_url.strip()
+                    if not normalized:
+                        continue
                     try:
-                        output.append(PluginImage.from_raw(raw_url))
+                        if normalized.startswith(("http://", "https://")):
+                            output.append(ResourceSpec.from_http_url(normalized))
+                        elif normalized.startswith("data:"):
+                            output.append(ResourceSpec.from_data_url(normalized))
                     except ValueError:
                         continue
 
