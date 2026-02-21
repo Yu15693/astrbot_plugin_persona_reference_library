@@ -277,12 +277,18 @@ class OpenRouterAdapter(ProviderAdapter):
                 requested_count=payload.count,
             )
 
-            yield render_result.detail_text
+            # 这里不要 yield MessageEventResult。
+            # tool 执行器会把 MessageEventResult 转成 `None`，
+            # runner 随后会记录“tool has no return value”，并可能提前结束循环。
+            # 因此面向用户的消息改为 event.send 直接发送，
+            # 只把给模型的文本结果通过 `yield str` 返回。
             if show_image_generate_details:
-                yield event.plain_result(render_result.detail_text)
+                await event.send(event.plain_result(render_result.detail_text))
 
             for result in render_result.send_results:
-                yield result
+                await event.send(result)
+
+            yield render_result.detail_text
 
         return FunctionTool(
             self.image_generate_tool_name,

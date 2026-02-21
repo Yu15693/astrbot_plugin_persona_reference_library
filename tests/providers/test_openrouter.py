@@ -10,6 +10,8 @@ from src.providers.utils import ImageGenerateRenderResult
 from src.resources import ResourceSpec
 from src.utils.errors import PluginErrorCode, PluginException
 
+from astrbot.api.event import MessageEventResult
+
 
 def _make_adapter() -> OpenRouterAdapter:
     return OpenRouterAdapter(
@@ -392,3 +394,59 @@ async def test_image_generate_tool_returns_single_detail_text_without_sendable_i
         results = [await output]
 
     assert results == ["生图完成\n提示：生图完成，但没有可发送的图片。"]
+
+
+@pytest.mark.asyncio
+async def test_image_generate_tool_sends_user_messages_via_event_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证：工具通过 event.send 给用户发消息，yield 仅用于给模型返回文本。"""
+    adapter = _make_adapter()
+
+    marker_result = MessageEventResult().message("image-send")
+
+    def fake_render_result(*args, **kwargs):
+        return ImageGenerateRenderResult(
+            send_results=[marker_result],
+            sent_count=1,
+            detail_text="生图完成",
+        )
+
+    monkeypatch.setattr(
+        "src.providers.openrouter.build_image_generate_render_result",
+        fake_render_result,
+    )
+
+    async def fake_success(_: ImageGenerateInput):
+        class _Output:
+            pass
+
+        return _Output()
+
+    monkeypatch.setattr(adapter, "image_generate", fake_success)
+    tool = adapter.get_image_generate_tool(show_image_generate_details=True)
+    handler = tool.handler
+    assert handler is not None
+
+    class _DummyEvent:
+        def __init__(self):
+            self.sent: list[MessageEventResult] = []
+
+        def plain_result(self, text: str) -> MessageEventResult:
+            return MessageEventResult().message(text)
+
+        async def send(self, message: MessageEventResult) -> None:
+            self.sent.append(message)
+
+    event = _DummyEvent()
+    output = handler(event, prompt="A cat on the moon")
+    results: list[Any]
+    if isinstance(output, AsyncGenerator):
+        results = [item async for item in output]
+    else:
+        results = [await output]
+
+    assert results == ["生图完成"]
+    assert len(event.sent) == 2
+    assert event.sent[0].get_plain_text() == "生图完成"
+    assert event.sent[1] is marker_result
