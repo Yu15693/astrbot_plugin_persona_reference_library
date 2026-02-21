@@ -19,8 +19,9 @@ from .schema import PluginState
 # 1. 与宿主具体 KV 实现解耦（只依赖调用约定）。
 # 2. 便于单元测试（可注入 fake/get put）。
 # 3. 后续可平滑切换存储后端（只要适配同一签名）。
-KVGet = Callable[[str, object], Awaitable[object | None]]
-KVPut = Callable[[str, object], Awaitable[None]]
+KVValue = int | float | str | bytes | bool | dict | list | None
+KVGet = Callable[[str, KVValue], Awaitable[KVValue]]
+KVPut = Callable[[str, KVValue], Awaitable[None]]
 StateValueValidator = Callable[[str], str]
 
 
@@ -145,6 +146,7 @@ class PluginStateStore:
 
     def _validate_current_image_model(self, value: str) -> str:
         image_models = self._config.get(CONFIG_IMAGE_MODELS_KEY)
+        assert isinstance(image_models, list)
         if value and value not in image_models:
             raise ValueError(f"Unsupported image model: {value}")
         return value

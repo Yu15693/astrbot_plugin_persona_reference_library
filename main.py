@@ -32,7 +32,7 @@ class MyPlugin(Star):
             kv_get=self.get_kv_data,
             kv_put=self.put_kv_data,
         )
-        self.provider_adapter: ProviderAdapter | None = None
+        self.provider_adapter: ProviderAdapter
 
     async def _build_provider_adapter_from_store(self) -> ProviderAdapter:
         image_model = await self.state_store.get_value(
@@ -82,6 +82,7 @@ class MyPlugin(Star):
         """列出当前生图模型和全部可用生图模型。"""
         current_model = await self.state_store.get_value(CURRENT_IMAGE_MODEL_KEY, "")
         image_models = self.state_store.get_config_value(CONFIG_IMAGE_MODELS_KEY, [])
+        assert isinstance(image_models, list)
 
         lines = [
             "生图模型管理",
