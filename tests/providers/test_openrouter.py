@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
 from src.providers.openrouter import OPENROUTER_DEFAULT_BASE_URL, OpenRouterAdapter
 from src.providers.schema import ImageGenerateInput
+from src.providers.utils import ImageGenerateRenderResult
 from src.resources import ResourceSpec
 from src.utils.errors import PluginErrorCode, PluginException
 
@@ -16,6 +18,7 @@ def _make_adapter() -> OpenRouterAdapter:
         timeout_sec=30,
         image_model="test-image-model",
         tool_model="test-tool-model",
+        save_image_format="png",
     )
 
 
@@ -46,6 +49,7 @@ async def test_openrouter_image_generate_modalities_seedream_image_only() -> Non
         timeout_sec=30,
         image_model="bytedance-seed/seedream-4.5",
         tool_model="test-tool-model",
+        save_image_format="png",
     )
 
     payload, _ = await adapter._build_image_generate_payload(
@@ -88,6 +92,7 @@ async def test_openrouter_request_uses_default_base_url_when_empty(
         timeout_sec=30,
         image_model="test-image-model",
         tool_model="test-tool-model",
+        save_image_format="png",
     )
     assert adapter.base_url == OPENROUTER_DEFAULT_BASE_URL
     captured: dict[str, Any] = {}
@@ -289,3 +294,101 @@ async def test_openrouter_image_generate_no_images_raises_upstream_error(
         )
 
     assert exc_info.value.code == PluginErrorCode.UPSTREAM_ERROR
+
+
+@pytest.mark.asyncio
+async def test_openrouter_image_generate_jpg_postprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证：save_image_format=jpg 时对输出进行 jpg 压缩。"""
+    adapter = OpenRouterAdapter(
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        timeout_sec=30,
+        image_model="test-image-model",
+        tool_model="test-tool-model",
+        save_image_format="jpg",
+    )
+
+    async def fake_request(_: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "data": {
+                "choices": [
+                    {
+                        "message": {
+                            "images": [
+                                {
+                                    "image_url": {
+                                        "url": (
+                                            "data:image/png;base64,"
+                                            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nmf8AAAAASUVORK5CYII="
+                                        )
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "elapsed_ms": 123,
+        }
+
+    monkeypatch.setattr(adapter, "_request_chat_completions", fake_request)
+
+    result = await adapter.image_generate(
+        ImageGenerateInput(
+            prompt="A tiny red dot",
+            count=1,
+        )
+    )
+
+    assert len(result.images) == 1
+    assert result.images[0].kind == "base64"
+    assert result.images[0].mime == "image/jpeg"
+    assert result.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_image_generate_tool_returns_single_detail_text_without_sendable_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证：无可发送图片时仅返回合并后的 detail_text。"""
+    adapter = _make_adapter()
+
+    def fake_render_result(*args, **kwargs):
+        return ImageGenerateRenderResult(
+            send_results=[],
+            sent_count=0,
+            detail_text="生图完成\n提示：生图完成，但没有可发送的图片。",
+        )
+
+    monkeypatch.setattr(
+        "src.providers.openrouter.build_image_generate_render_result",
+        fake_render_result,
+    )
+
+    async def fake_success(_: ImageGenerateInput):
+        class _Output:
+            pass
+
+        return _Output()
+
+    monkeypatch.setattr(adapter, "image_generate", fake_success)
+    tool = adapter.get_image_generate_tool(show_image_generate_details=False)
+    handler = tool.handler
+    assert handler is not None
+
+    class _DummyEvent:
+        pass
+
+    output = handler(
+        _DummyEvent(),
+        prompt="A cat on the moon",
+    )
+    results: list[Any]
+    if isinstance(output, AsyncGenerator):
+        results = [item async for item in output]
+    else:
+        results = [await output]
+
+    assert results == ["生图完成\n提示：生图完成，但没有可发送的图片。"]

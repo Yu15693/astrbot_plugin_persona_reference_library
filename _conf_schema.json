@@ -51,5 +51,11 @@
     ],
     "default": "jpg",
     "hint": "保存图片时使用的格式，仅支持 png 或 jpg。"
+  },
+  "show_image_generate_details": {
+    "description": "显示生图详细信息",
+    "type": "bool",
+    "default": true,
+    "hint": "控制 prl_image_generate 成功后是否在聊天框显示模型、耗时、数量等详细信息。"
   }
 }

@@ -8,18 +8,21 @@ from .src.providers import (
     read_provider_adapter_config,
 )
 from .src.providers.schema import ImageGenerateInput
+from .src.providers.utils import build_image_generate_render_result
 from .src.storage import PluginStateStore
 from .src.storage.keys import (
     CONFIG_API_KEY_KEY,
     CONFIG_BASE_URL_KEY,
     CONFIG_IMAGE_MODELS_KEY,
     CONFIG_PROVIDER_KEY,
+    CONFIG_SAVE_IMAGE_FORMAT_KEY,
+    CONFIG_SHOW_IMAGE_GENERATE_DETAILS_KEY,
     CONFIG_TIMEOUT_SEC_KEY,
     CONFIG_TOOL_MODEL_KEY,
     CURRENT_IMAGE_MODEL_KEY,
 )
 from .src.tools.draw_args import parse_draw_args
-from .src.tools.image import build_image_send_result, extract_images_from_event
+from .src.tools.image import extract_images_from_event
 from .src.utils.args import extract_command_args
 from .src.utils.log import logger
 
@@ -58,6 +61,9 @@ class MyPlugin(Star):
                 CONFIG_TOOL_MODEL_KEY: self.state_store.get_config_value(
                     CONFIG_TOOL_MODEL_KEY
                 ),
+                CONFIG_SAVE_IMAGE_FORMAT_KEY: self.state_store.get_config_value(
+                    CONFIG_SAVE_IMAGE_FORMAT_KEY, "jpg"
+                ),
             }
         )
 
@@ -69,7 +75,17 @@ class MyPlugin(Star):
         await self.state_store.initialize()
         # 初始化供应商适配器
         self.provider_adapter = await self._build_provider_adapter_from_store()
-        assert self.provider_adapter is not None
+        # 注册工具
+        show_image_generate_details = bool(
+            self.state_store.get_config_value(CONFIG_SHOW_IMAGE_GENERATE_DETAILS_KEY)
+        )
+        tool = self.provider_adapter.get_image_generate_tool(
+            show_image_generate_details=show_image_generate_details
+        )
+        self.context.add_llm_tools(tool)
+        # add_llm_tools 使用 tool.__module__ 推断归属；FunctionTool 实例默认模块不在插件下，
+        # 这里显式修正到插件主模块，确保禁用/卸载时可被正确识别与移除。
+        tool.handler_module_path = self.__class__.__module__
 
     @filter.command_group("prl")
     def prl(self) -> None:
@@ -158,34 +174,22 @@ class MyPlugin(Star):
             output = await self.provider_adapter.image_generate(payload)
         except Exception as exc:
             logger.exception("prl draw failed: %s", exc)
-            yield event.plain_result("生图失败")
+            yield event.plain_result("生图失败：上游请求失败。")
             return
 
-        model_name = output.metadata.model
-        elapsed_text = f"{output.metadata.elapsed_ms} ms"
-
-        yield event.plain_result(
-            "\n".join(
-                [
-                    "生图完成",
-                    f"模型={model_name}  耗时={elapsed_text}",
-                ]
-            )
+        render_result = build_image_generate_render_result(
+            event,
+            output,
+            requested_count=payload.count,
         )
+        yield event.plain_result(render_result.detail_text)
 
-        sent_count = 0
-        for image in output.images:
-            result = build_image_send_result(event, image)
-            if result is None:
-                continue
-            sent_count += 1
+        for result in render_result.send_results:
             yield result
-
-        if sent_count == 0:
-            yield event.plain_result("生图完成，但没有可发送的图片。")
-
-        if output.warnings:
-            yield event.plain_result("生图警告：\n" + "\n".join(output.warnings))
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        # 兜底移除动态注册的工具，避免插件卸载后残留。
+        self.context.provider_manager.llm_tools.remove_func(
+            self.provider_adapter.image_generate_tool_name
+        )

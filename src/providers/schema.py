@@ -19,6 +19,8 @@ class ProviderAdapterConfig:
     """图像生成模型名称"""
     tool_model: str
     """工具调用模型名称"""
+    save_image_format: str = "jpg"
+    """输出图片格式（png/jpg）。"""
 
 
 @dataclass(slots=True)

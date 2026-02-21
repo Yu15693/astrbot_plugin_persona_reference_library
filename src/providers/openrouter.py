@@ -5,19 +5,80 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.api import FunctionTool
+from astrbot.api.event import AstrMessageEvent
+
 from ..resources import ResourceSpec
 from ..utils.dicts import get_dict_value
 from ..utils.errors import PluginErrorCode, PluginException
 from ..utils.http import PostJsonSuccessResponse, post_json
+from ..utils.log import logger
 from .base import ProviderAdapter
 from .schema import (
     ImageGenerateInput,
     ImageGenerateOutput,
     InferenceMetadata,
 )
+from .utils import build_image_generate_render_result, parse_reference_images
 
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 IMAGE_ONLY_MODALITY_MODEL_KEYWORDS = ("seedream-4.5",)
+
+OPENROUTER_SUPPORTED_ASPECT_RATIOS = [
+    "1:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "16:9",
+    "21:9",
+]
+OPENROUTER_SUPPORTED_IMAGE_SIZES = ["1K", "2K", "4K"]
+
+OPENROUTER_IMAGE_GENERATE_TOOL_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "prompt": {
+            "type": "string",
+            "description": "生图提示词（非空白）。",
+            "minLength": 1,
+        },
+        "aspect_ratio": {
+            "type": "string",
+            "description": "图片比例（可选）。可与 image_size 同时传入。",
+            "enum": OPENROUTER_SUPPORTED_ASPECT_RATIOS,
+        },
+        "image_size": {
+            "type": "string",
+            "description": "图片尺寸档位（可选）。可与 aspect_ratio 同时传入。",
+            "enum": OPENROUTER_SUPPORTED_IMAGE_SIZES,
+        },
+        "n": {
+            "type": "integer",
+            "description": "图片数量（可选，不传默认 1）。",
+            "minimum": 1,
+            "maximum": 4,
+            "default": 1,
+        },
+        "reference_images": {
+            "type": "array",
+            "description": "参考图列表（可选），仅支持 http(s) 图片 URL。",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": True,
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^https?://.+$",
+            },
+        },
+    },
+    "required": ["prompt"],
+    "additionalProperties": False,
+}
 
 
 @dataclass(slots=True)
@@ -27,6 +88,7 @@ class OpenRouterAdapter(ProviderAdapter):
     timeout_sec: int
     image_model: str
     tool_model: str
+    save_image_format: str = "jpg"
     provider: str = "openrouter"
 
     def __post_init__(self) -> None:
@@ -135,6 +197,8 @@ class OpenRouterAdapter(ProviderAdapter):
                 },
             )
 
+        images = await self._process_output_images(images, warnings)
+
         if len(images) != payload.count:
             warnings.append(
                 f"Upstream returned {len(images)} images, different from requested {payload.count}."
@@ -148,6 +212,83 @@ class OpenRouterAdapter(ProviderAdapter):
                 elapsed_ms=elapsed_ms,
             ),
             warnings=warnings,
+        )
+
+    async def _process_output_images(
+        self,
+        images: list[ResourceSpec],
+        warnings: list[str],
+    ) -> list[ResourceSpec]:
+        if self.save_image_format != "jpg":
+            return images
+
+        converted_images: list[ResourceSpec] = []
+        for index, image in enumerate(images):
+            try:
+                image_blob = await image.convert_to_image_blob(
+                    timeout_sec=self.timeout_sec
+                )
+                jpg_blob = image_blob.compress_to_jpg()
+                converted_images.append(
+                    ResourceSpec.from_base64(
+                        jpg_blob.to_base64(),
+                        mime="image/jpeg",
+                    )
+                )
+            except Exception as exc:
+                warnings.append(
+                    f"image[{index}] convert to jpg failed, fallback to original ({exc!s})."
+                )
+                converted_images.append(image)
+        return converted_images
+
+    def get_image_generate_tool(
+        self,
+        *,
+        show_image_generate_details: bool = True,
+    ) -> FunctionTool:
+        async def handler(
+            event: AstrMessageEvent,
+            prompt: str,
+            aspect_ratio: str = "",
+            image_size: str = "",
+            n: int = 1,
+            reference_images: list[str] | None = None,
+        ):
+            parsed_reference_images = parse_reference_images(reference_images)
+            payload = ImageGenerateInput(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+                count=n,
+                reference_images=parsed_reference_images,
+            )
+
+            try:
+                output = await self.image_generate(payload)
+            except Exception as exc:
+                logger.exception("prl_image_generate failed: %s", exc)
+                yield "生图失败：上游请求失败。"
+                return
+
+            render_result = build_image_generate_render_result(
+                event,
+                output,
+                requested_count=payload.count,
+            )
+
+            yield render_result.detail_text
+            if show_image_generate_details:
+                yield event.plain_result(render_result.detail_text)
+
+            for result in render_result.send_results:
+                yield result
+
+        return FunctionTool(
+            self.image_generate_tool_name,
+            "根据提示词生成图片。可选传入比例、尺寸、数量和参考图（参考图仅支持 http(s) 图片 URL，不支持 data URL/base64）。",
+            OPENROUTER_IMAGE_GENERATE_TOOL_PARAMETERS,
+            handler,  # type: ignore 类型符合要求
         )
 
 

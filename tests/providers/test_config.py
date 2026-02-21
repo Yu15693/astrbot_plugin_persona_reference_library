@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.providers.config import read_provider_adapter_config
 from src.providers.schema import ProviderAdapterConfig
 
@@ -14,6 +13,7 @@ def _valid_raw_config() -> dict[str, object]:
         "timeout_sec": 30,
         "image_model": "test-image-model",
         "tool_model": "test-tool-model",
+        "save_image_format": "png",
     }
 
 
@@ -28,6 +28,7 @@ def test_read_provider_adapter_config_success() -> None:
     assert config.timeout_sec == 30
     assert config.image_model == "test-image-model"
     assert config.tool_model == "test-tool-model"
+    assert config.save_image_format == "png"
 
 
 def test_read_provider_adapter_config_success_ignores_extra_keys() -> None:
@@ -41,10 +42,11 @@ def test_read_provider_adapter_config_success_ignores_extra_keys() -> None:
     assert not hasattr(config, "extra")
 
 
-def test_read_provider_adapter_config_missing_required_key() -> None:
+@pytest.mark.parametrize("missing_key", ["api_key", "save_image_format"])
+def test_read_provider_adapter_config_missing_required_key(missing_key: str) -> None:
     """验证：缺少任一必填字段时抛出 KeyError。"""
     raw_config = _valid_raw_config()
-    raw_config.pop("api_key")
+    raw_config.pop(missing_key)
 
     with pytest.raises(KeyError, match="Missing required provider config keys"):
         read_provider_adapter_config(raw_config)

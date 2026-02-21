@@ -16,6 +16,7 @@ def _build_openrouter(config: ProviderAdapterConfig) -> ProviderAdapter:
         timeout_sec=config.timeout_sec,
         image_model=config.image_model,
         tool_model=config.tool_model,
+        save_image_format=config.save_image_format,
     )
 
 

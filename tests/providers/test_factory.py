@@ -15,6 +15,7 @@ def _make_config(provider: str = "openrouter") -> ProviderAdapterConfig:
         timeout_sec=45,
         image_model="test-image-model",
         tool_model="test-tool-model",
+        save_image_format="jpg",
     )
 
 
@@ -31,6 +32,7 @@ def test_build_provider_adapter_success() -> None:
     assert adapter.timeout_sec == config.timeout_sec
     assert adapter.image_model == config.image_model
     assert adapter.tool_model == config.tool_model
+    assert adapter.save_image_format == config.save_image_format
 
 
 def test_build_provider_adapter_unsupported_provider() -> None:
